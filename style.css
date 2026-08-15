@@ -8,4 +8,7 @@
 .roleplay-visual-director .rvl-checkbox { flex-direction:row; align-items:center; gap:8px; }
 .rvl-chat-actions { display:flex; gap:6px; padding:6px 8px; justify-content:center; flex-wrap:wrap; }
 .rvl-chat-actions .menu_button { margin:0; font-size:.9em; }
+.rvl-feedback { display:flex; gap:6px; margin:8px 0 0; }
+.rvl-feedback .menu_button { margin:0; min-width:36px; }
+.rvl-feedback .rvl-approved { color:#6acb7b; border-color:#6acb7b; }
 @media (max-width:600px) { .rvl-chat-actions .menu_button { flex:1 1 30%; font-size:.78em; padding:6px 3px; } }

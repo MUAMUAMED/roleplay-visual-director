@@ -38,6 +38,37 @@ function saveApiKey(provider, key, remember) {
 function forgetPersistentKey(provider) { const saved = persistentKeys(); delete saved[provider]; localStorage.setItem(PERSISTENT_KEY, JSON.stringify(saved)); }
 function notice(message, error = false) { $('#rvl_status').text(message).toggleClass('rvl-error', error); }
 
+function getVisualMemory() {
+    const context = SillyTavern.getContext();
+    context.chatMetadata[MODULE_NAME] = context.chatMetadata[MODULE_NAME] || {};
+    return context.chatMetadata[MODULE_NAME];
+}
+
+async function approveImage(messageId) {
+    const context = SillyTavern.getContext();
+    const message = context.chat?.[messageId];
+    const record = message?.extra?.[MODULE_NAME];
+    if (!record?.imageUrl) return;
+    const memory = getVisualMemory();
+    memory.lastApprovedImage = { url: record.imageUrl, mode: record.mode, approvedAt: Date.now() };
+    await context.saveMetadata();
+    $(`#rvl_feedback_${messageId} .rvl-like`).addClass('rvl-approved').attr('title', 'Imagem aprovada para continuidade');
+    notice('Imagem aprovada: será usada como referência nas próximas gerações.');
+}
+
+async function dislikeImage(messageId, mode) {
+    const context = SillyTavern.getContext();
+    const record = context.chat?.[messageId]?.extra?.[MODULE_NAME];
+    const memory = getVisualMemory();
+    // A rejection of the currently approved image must also remove it from
+    // continuity, otherwise the "redo" would keep feeding the rejected look.
+    if (record?.imageUrl && memory.lastApprovedImage?.url === record.imageUrl) {
+        delete memory.lastApprovedImage;
+        await context.saveMetadata();
+    }
+    run(mode);
+}
+
 function dataUrlToImage(dataUrl) {
     const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
     return match ? { mimeType: match[1], data: match[2], dataUrl } : null;
@@ -45,11 +76,18 @@ function dataUrlToImage(dataUrl) {
 
 async function characterReferences() {
     const context = SillyTavern.getContext();
-    const names = new Set();
-    const active = context.characters?.[context.characterId];
-    if (active?.name) names.add(active.name);
-    for (const message of (context.chat || []).slice(-Number(settings().messages))) if (!message.is_user && message.name) names.add(message.name);
-    const characters = (context.characters || []).filter(character => character.avatar && names.has(character.name)).slice(0, 4);
+    const allCharacters = context.characters || [];
+    const active = allCharacters[context.characterId];
+    const activeGroup = context.groupId != null
+        ? (context.groups || []).find(group => group.id === context.groupId)
+        : null;
+    // Never resolve a character by display name: names can repeat across cards and
+    // chats. For a solo chat use precisely the active card; for a group use only
+    // that group's declared avatar members.
+    const groupAvatars = new Set(activeGroup?.members || []);
+    const characters = activeGroup
+        ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
+        : (active?.avatar ? [active] : []);
     const references = await Promise.all(characters.map(async character => {
         try {
             const response = await fetch(`/characters/${encodeURIComponent(character.avatar)}`);
@@ -59,7 +97,19 @@ async function characterReferences() {
             return image ? { ...image, name: character.name } : null;
         } catch { return null; }
     }));
-    return references.filter(Boolean);
+    const validReferences = references.filter(Boolean);
+    const approved = getVisualMemory().lastApprovedImage;
+    if (approved?.url) {
+        try {
+            const response = await fetch(approved.url);
+            if (response.ok) {
+                const blob = await response.blob();
+                const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
+                if (image) validReferences.push({ ...image, name: 'approved continuity image', continuity: true });
+            }
+        } catch { console.warn(`[${MODULE_NAME}] Could not load approved continuity image.`); }
+    }
+    return validReferences.slice(0, 5);
 }
 
 function currentCharacterName() {
@@ -67,7 +117,7 @@ function currentCharacterName() {
     return context.characters?.[context.characterId]?.name || 'the active character';
 }
 
-function buildPrompt(mode) {
+function buildPrompt(mode, references) {
     const context = SillyTavern.getContext();
     const s = settings();
     const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : currentCharacterName()}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
@@ -76,7 +126,19 @@ function buildPrompt(mode) {
         pov: 'Create a first-person image from the player\'s eyes. Do not show the player\'s face or body unless the roleplay explicitly describes it.',
         look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player\'s point of view as if standing in front of them.`,
     }[mode];
-    return `${modeInstruction}\nUse the attached character images only as visual identity references. Preserve each character's identity and distinguish what is explicitly stated from inference. No text, captions, dialogue bubbles, watermarks, or logos.\n\nCurrent roleplay context:\n${history || 'No chat messages are available.'}`;
+    const approvedContinuity = references.some(reference => reference.continuity);
+    return `${modeInstruction}
+
+NON-NEGOTIABLE IDENTITY LOCK:
+The attached profile images are authoritative visual identity references. Reproduce the SAME recognizable character(s), not merely a similar person. Preserve face geometry, skin tone, eye shape and color, hairstyle and color, distinctive features, body proportions, and overall art style. Do not substitute, beautify into a different person, age up/down, or change ethnicity, hairstyle, or facial structure.
+
+CONTINUITY LOCK:
+${approvedContinuity ? 'The final attached image is a user-approved continuity reference. Preserve its character identity, clothing, accessories, setting, pose logic, and visual style unless the recent roleplay context explicitly changes them.' : 'No earlier approved image exists yet. Derive clothing, accessories, condition, and setting only from the recent roleplay context. If the context does not explicitly change clothing, do not invent a costume change.'}
+
+No text, captions, dialogue bubbles, watermarks, or logos.
+
+Current roleplay context:
+${history || 'No chat messages are available.'}`;
 }
 
 async function generateOpenRouter(key, prompt, references) {
@@ -112,7 +174,13 @@ function showImage(result) {
 }
 
 function renderChatActions() {
-    if ($('#rvl_chat_actions').length || !$('#send_form').length) return;
+    const context = SillyTavern.getContext();
+    const hasRoleplayChat = context.groupId != null || Boolean(context.characters?.[context.characterId]?.avatar);
+    if (!hasRoleplayChat || !$('#send_form').length) {
+        $('#rvl_chat_actions').remove();
+        return;
+    }
+    if ($('#rvl_chat_actions').length) return;
     const toolbar = $('<div>', { id: 'rvl_chat_actions', class: 'rvl-chat-actions', title: 'Gerar imagem do roleplay' });
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'scene', html: '<i class="fa-solid fa-image"></i> Cena' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', html: '<i class="fa-solid fa-eye"></i> POV' }));
@@ -135,12 +203,32 @@ async function publishToChat(result, mode) {
         is_system: true,
         send_date: Date.now(),
         mes: `[Roleplay Visual Director: ${modeName}]`,
-        extra: { media: [{ url, type: 'image', title: modeName, source: 'api' }], inline_image: true },
+        extra: { media: [{ url, type: 'image', title: modeName, source: 'api' }], inline_image: true, [MODULE_NAME]: { imageUrl: url, mode } },
     };
     const context = SillyTavern.getContext();
     context.chat.push(message);
     addOneMessage(message);
     await saveChatConditional();
+    return { messageId: context.chat.length - 1, mode };
+}
+
+function attachFeedbackControls(messageId, mode) {
+    const messageElement = $(`#chat .mes[mesid="${messageId}"]`).length ? $(`#chat .mes[mesid="${messageId}"]`) : $('#chat .mes').last();
+    if (!messageElement.length || messageElement.find(`#rvl_feedback_${messageId}`).length) return;
+    const feedback = $('<div>', { id: `rvl_feedback_${messageId}`, class: 'rvl-feedback' });
+    feedback.append($('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: usar como referência de continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' }));
+    feedback.append($('<button>', { class: 'menu_button rvl-dislike', type: 'button', title: 'Refazer esta imagem', html: '<i class="fa-solid fa-thumbs-down"></i>' }));
+    feedback.on('click', '.rvl-like', () => approveImage(messageId));
+    feedback.on('click', '.rvl-dislike', () => dislikeImage(messageId, mode));
+    messageElement.append(feedback);
+}
+
+function restoreFeedbackControls() {
+    const context = SillyTavern.getContext();
+    (context.chat || []).forEach((message, messageId) => {
+        const record = message.extra?.[MODULE_NAME];
+        if (record?.imageUrl) attachFeedbackControls(messageId, record.mode);
+    });
 }
 
 async function run(mode) {
@@ -153,10 +241,12 @@ async function run(mode) {
         notice('Preparando contexto e referência do personagem…');
         const references = await characterReferences();
         notice('Gerando imagem… isto pode levar alguns segundos.');
-        const result = provider === 'google' ? await generateGoogle(key, buildPrompt(mode), references) : await generateOpenRouter(key, buildPrompt(mode), references);
+        const prompt = buildPrompt(mode, references);
+        const result = provider === 'google' ? await generateGoogle(key, prompt, references) : await generateOpenRouter(key, prompt, references);
         showImage(result);
         notice('Enviando imagem para o chat…');
-        await publishToChat(result, mode);
+        const published = await publishToChat(result, mode);
+        attachFeedbackControls(published.messageId, published.mode);
         notice(result.cost != null ? `Imagem criada. Custo informado: US$ ${Number(result.cost).toFixed(4)}.` : 'Imagem criada.');
     } catch (error) { console.error(`[${MODULE_NAME}]`, error); notice(error.message || 'Falha ao gerar a imagem.', true); }
 }
@@ -191,6 +281,11 @@ async function init() {
     });
     $('#rvl_scene').on('click', () => run('scene')); $('#rvl_pov').on('click', () => run('pov')); $('#rvl_look').on('click', () => run('look'));
     renderChatActions();
+    restoreFeedbackControls();
+    context.eventSource.on(context.event_types.CHAT_CHANGED, () => setTimeout(() => {
+        renderChatActions();
+        restoreFeedbackControls();
+    }, 250));
 }
 
 SillyTavern.getContext().eventSource.on(SillyTavern.getContext().event_types.APP_READY, init);

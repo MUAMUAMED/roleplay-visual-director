@@ -11,6 +11,7 @@ Extensão de imagens para SillyTavern que transforma o contexto recente do rolep
 - Conectores diretos para OpenRouter e Google Gemini.
 - Publica automaticamente cada imagem gerada no chat como uma mensagem visual do sistema.
 - Exibe botões **Cena**, **POV** e **Visual** diretamente acima da caixa de mensagem do chat.
+- Cada imagem no chat tem **👍** para aprová-la como referência de continuidade e **👎** para refazê-la. A próxima imagem envia o avatar e a última imagem aprovada como referências.
 
 ## Instalação
 
