@@ -19,7 +19,8 @@
         <option value="black-forest-labs/flux.2-pro">FLUX.2 Pro — referência e consistência</option>
       </datalist>
       <label>Chave da API (somente nesta sessão)<input id="rvl_api_key" type="password" autocomplete="off" placeholder="Cole a chave do provedor selecionado"></label>
-      <p class="rvl-muted">Por segurança, a chave não é salva nas configurações da extensão. Ela some ao recarregar o SillyTavern.</p>
+      <label class="rvl-checkbox"><input id="rvl_remember_key" type="checkbox"> Lembrar esta chave neste navegador</label>
+      <p class="rvl-muted">Ao marcar, a chave fica no armazenamento local deste navegador. Não é enviada ao GitHub, mas outras extensões da mesma instalação podem acessá-la.</p>
       <div class="rvl-actions">
         <button id="rvl_scene" class="menu_button"><i class="fa-solid fa-image"></i> Criar cena</button>
         <button id="rvl_pov" class="menu_button"><i class="fa-solid fa-eye"></i> Criar POV do jogador</button>

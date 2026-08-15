@@ -10,6 +10,7 @@ Extensão de imagens para SillyTavern que transforma o contexto recente do rolep
 - Usa o avatar do personagem ativo como imagem de referência, quando disponível.
 - Conectores diretos para OpenRouter e Google Gemini.
 - Publica automaticamente cada imagem gerada no chat como uma mensagem visual do sistema.
+- Exibe botões **Cena**, **POV** e **Visual** diretamente acima da caixa de mensagem do chat.
 
 ## Instalação
 
@@ -22,7 +23,7 @@ No SillyTavern, abra **Extensions → Install Extension**, cole a URL deste repo
 3. Escolha a proporção e a quantidade de mensagens usadas como contexto.
 4. Clique em um dos três botões de geração.
 
-As chaves ficam apenas em `sessionStorage`: são apagadas ao recarregar o SillyTavern e nunca são gravadas no repositório ou nas configurações da extensão.
+Por padrão, as chaves ficam apenas durante a sessão. A opção **Lembrar esta chave neste navegador** salva a chave no armazenamento local do navegador para não precisar colá-la novamente. Ela nunca é gravada no repositório, mas não deve ser usada em uma instalação compartilhada, pois extensões da mesma instalação podem acessá-la.
 
 ### Modelos sugeridos
 
