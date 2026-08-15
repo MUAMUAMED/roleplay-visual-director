@@ -123,7 +123,7 @@ function buildPrompt(mode, references) {
     const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : currentCharacterName()}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
     const modeInstruction = {
         scene: 'Create a cinematic third-person scene from the current roleplay moment.',
-        pov: 'Create a cinematic first-person roleplay scene at eye level. Compose the camera as the adult male player\'s viewpoint. His hands and lower arms may appear naturally at the bottom edge of the frame when relevant. Focus the composition on the active character(s), action, and setting in front of him.',
+        pov: 'Create a true first-person roleplay image: the camera is physically the adult male player\'s eyes, at his natural eye level, never a detached spectator camera. Render the spatial scale, angle, depth, and distance exactly as the player would see them. The player may appear only as natural foreground hands or lower arms. Place the active character at the precise distance stated or implied by the roleplay; during close moments, frame that character close to the camera so they fill the view naturally.',
         look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player\'s point of view as if standing in front of them.`,
     }[mode];
     const approvedContinuity = references.some(reference => reference.continuity);
@@ -139,6 +139,9 @@ ${referenceRoles}
 
 IDENTITY LOCK:
 Render the same recognizable character(s) shown in their profile references. Keep face geometry, skin tone, eye shape and color, hairstyle and color, distinctive features, body proportions, and overall art style stable. Preserve a coherent adult character design across the image.
+
+CAST COMPOSITION:
+For romance or close relationship scenes, depict exactly one adult man: the male player. The remaining people are only the character partner(s) described in the roleplay. Never add a second man, male observer, male partner, or male bystander. Keep this cast and the described relationship dynamics consistent in both POV and third-person scenes.
 
 CONTINUITY LOCK:
 ${approvedContinuity ? 'Use the final approved reference to continue its established character identity, clothing, accessories, setting, pose logic, and visual style whenever the recent roleplay does not explicitly change them.' : 'Derive clothing, accessories, condition, and setting from the recent roleplay context, carrying forward the established appearance when no change is described.'}
