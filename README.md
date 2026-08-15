@@ -18,7 +18,7 @@ No SillyTavern, abra **Extensions → Install Extension**, cole a URL deste repo
 
 ## Configuração
 
-1. Escolha o provedor e o modelo.
+1. Escolha o provedor e o modelo pelo seletor do painel.
 2. Cole a chave da API no campo correspondente.
 3. Escolha a proporção e a quantidade de mensagens usadas como contexto.
 4. Clique em um dos três botões de geração.

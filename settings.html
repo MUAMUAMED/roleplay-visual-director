@@ -7,17 +7,11 @@
       <p class="rvl-muted">Gere imagens a partir da conversa e da referência do personagem ativo.</p>
       <div class="rvl-grid">
         <label>Provedor<select id="rvl_provider"><option value="openrouter">OpenRouter</option><option value="google">Google Gemini</option></select></label>
-        <label>Modelo<input id="rvl_model" type="text" list="rvl_openrouter_models"></label>
+        <label>Modelo<select id="rvl_model"></select></label>
         <label>Proporção<select id="rvl_aspect"><option>16:9</option><option>9:16</option><option selected>1:1</option><option>4:3</option><option>3:4</option></select></label>
         <label>Qualidade<select id="rvl_quality"><option value="auto">Auto</option><option value="low">Baixa</option><option value="medium">Média</option><option value="high">Alta</option></select></label>
         <label>Mensagens no contexto<input id="rvl_messages" type="number" min="1" max="30"></label>
       </div>
-      <datalist id="rvl_openrouter_models">
-        <option value="google/gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite Image — econômico</option>
-        <option value="google/gemini-2.5-flash-image">Gemini 2.5 Flash Image — qualidade</option>
-        <option value="black-forest-labs/flux.2-klein-4b">FLUX.2 Klein 4B — cenas baratas</option>
-        <option value="black-forest-labs/flux.2-pro">FLUX.2 Pro — referência e consistência</option>
-      </datalist>
       <label>Chave da API (somente nesta sessão)<input id="rvl_api_key" type="password" autocomplete="off" placeholder="Cole a chave do provedor selecionado"></label>
       <label class="rvl-checkbox"><input id="rvl_remember_key" type="checkbox"> Lembrar esta chave neste navegador</label>
       <p class="rvl-muted">Ao marcar, a chave fica no armazenamento local deste navegador. Não é enviada ao GitHub, mas outras extensões da mesma instalação podem acessá-la.</p>

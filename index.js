@@ -5,6 +5,18 @@ const MODULE_NAME = 'roleplay_visual_director';
 const SESSION_KEY = `${MODULE_NAME}_api_keys`;
 const PERSISTENT_KEY = `${MODULE_NAME}_saved_api_keys`;
 const defaults = Object.freeze({ provider: 'openrouter', openrouterModel: 'google/gemini-2.5-flash-image', googleModel: 'gemini-3.1-flash-image', aspectRatio: '1:1', quality: 'auto', messages: 8 });
+const modelChoices = Object.freeze({
+    openrouter: [
+        ['google/gemini-3.1-flash-lite-image', 'Gemini 3.1 Flash Lite Image — econômico'],
+        ['google/gemini-2.5-flash-image', 'Gemini 2.5 Flash Image — qualidade'],
+        ['black-forest-labs/flux.2-klein-4b', 'FLUX.2 Klein 4B — cenas baratas'],
+        ['black-forest-labs/flux.2-pro', 'FLUX.2 Pro — referência e consistência'],
+        ['bytedance-seed/seedream-4.5', 'Seedream 4.5 — retratos e edição'],
+    ],
+    google: [
+        ['gemini-3.1-flash-image', 'Gemini 3.1 Flash Image'],
+    ],
+});
 
 function settings() {
     const context = SillyTavern.getContext();
@@ -152,7 +164,13 @@ async function run(mode) {
 function syncUi() {
     const s = settings();
     const provider = $('#rvl_provider').val();
-    $('#rvl_model').val(provider === 'google' ? s.googleModel : s.openrouterModel);
+    const modelKey = provider === 'google' ? 'googleModel' : 'openrouterModel';
+    const selected = s[modelKey];
+    const choices = modelChoices[provider] || [];
+    const modelSelect = $('#rvl_model').empty();
+    for (const [value, label] of choices) modelSelect.append($('<option>', { value, text: label }));
+    if (!choices.some(([value]) => value === selected)) modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
+    modelSelect.val(selected);
     $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
 }
 
