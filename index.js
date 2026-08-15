@@ -123,19 +123,27 @@ function buildPrompt(mode, references) {
     const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : currentCharacterName()}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
     const modeInstruction = {
         scene: 'Create a cinematic third-person scene from the current roleplay moment.',
-        pov: 'Create a first-person image from the player\'s eyes. Do not show the player\'s face or body unless the roleplay explicitly describes it.',
+        pov: 'Create a cinematic first-person roleplay scene at eye level. Compose the camera as the adult male player\'s viewpoint. His hands and lower arms may appear naturally at the bottom edge of the frame when relevant. Focus the composition on the active character(s), action, and setting in front of him.',
         look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player\'s point of view as if standing in front of them.`,
     }[mode];
     const approvedContinuity = references.some(reference => reference.continuity);
+    const referenceRoles = references.length
+        ? references.map((reference, index) => reference.continuity
+            ? `Image ${index + 1}: the approved previous scene. Use it as the continuity reference for the same clothing, accessories, setting, and visual style.`
+            : `Image ${index + 1}: ${reference.name}'s profile image. Use it as the authoritative visual identity reference for that character.`).join('\n')
+        : 'There are no visual references for this request.';
     return `${modeInstruction}
 
-NON-NEGOTIABLE IDENTITY LOCK:
-The attached profile images are authoritative visual identity references. Reproduce the SAME recognizable character(s), not merely a similar person. Preserve face geometry, skin tone, eye shape and color, hairstyle and color, distinctive features, body proportions, and overall art style. Do not substitute, beautify into a different person, age up/down, or change ethnicity, hairstyle, or facial structure.
+VISUAL REFERENCE ROLES:
+${referenceRoles}
+
+IDENTITY LOCK:
+Render the same recognizable character(s) shown in their profile references. Keep face geometry, skin tone, eye shape and color, hairstyle and color, distinctive features, body proportions, and overall art style stable. Preserve a coherent adult character design across the image.
 
 CONTINUITY LOCK:
-${approvedContinuity ? 'The final attached image is a user-approved continuity reference. Preserve its character identity, clothing, accessories, setting, pose logic, and visual style unless the recent roleplay context explicitly changes them.' : 'No earlier approved image exists yet. Derive clothing, accessories, condition, and setting only from the recent roleplay context. If the context does not explicitly change clothing, do not invent a costume change.'}
+${approvedContinuity ? 'Use the final approved reference to continue its established character identity, clothing, accessories, setting, pose logic, and visual style whenever the recent roleplay does not explicitly change them.' : 'Derive clothing, accessories, condition, and setting from the recent roleplay context, carrying forward the established appearance when no change is described.'}
 
-No text, captions, dialogue bubbles, watermarks, or logos.
+Use a clean, wordless visual composition with cinematic framing.
 
 Current roleplay context:
 ${history || 'No chat messages are available.'}`;
