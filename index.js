@@ -17,6 +17,7 @@ const modelChoices = Object.freeze({
         ['gemini-3.1-flash-image', 'Gemini 3.1 Flash Image'],
     ],
 });
+let openRouterCatalog = [];
 
 function settings() {
     const context = SillyTavern.getContext();
@@ -37,6 +38,33 @@ function saveApiKey(provider, key, remember) {
 }
 function forgetPersistentKey(provider) { const saved = persistentKeys(); delete saved[provider]; localStorage.setItem(PERSISTENT_KEY, JSON.stringify(saved)); }
 function notice(message, error = false) { $('#rvl_status').text(message).toggleClass('rvl-error', error); }
+
+function choicesFor(provider) {
+    if (provider !== 'openrouter' || !openRouterCatalog.length) return modelChoices[provider] || [];
+    return openRouterCatalog.map(model => {
+        const acceptsReferences = Boolean(model.supported_parameters?.input_references);
+        const displayName = model.name || model.id;
+        return [model.id, `${displayName}${acceptsReferences ? ' — aceita referências' : ''}`];
+    });
+}
+
+async function refreshOpenRouterCatalog() {
+    const key = $('#rvl_api_key').val().trim() || apiKeyFor('openrouter');
+    if (!key) return notice('Cole ou lembre sua chave OpenRouter antes de atualizar o catálogo.', true);
+    try {
+        notice('Buscando todos os modelos de imagem do OpenRouter…');
+        const response = await fetch('https://openrouter.ai/api/v1/images/models', { headers: { Authorization: `Bearer ${key}` } });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error?.message || 'Não foi possível carregar o catálogo OpenRouter.');
+        openRouterCatalog = (json.data || []).filter(model => model?.id).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+        if (!openRouterCatalog.length) throw new Error('O OpenRouter não retornou modelos de imagem disponíveis.');
+        syncUi();
+        notice(`${openRouterCatalog.length} modelos de imagem carregados do OpenRouter.`);
+    } catch (error) {
+        console.error(`[${MODULE_NAME}] Could not load OpenRouter image models.`, error);
+        notice(error.message || 'Não foi possível carregar o catálogo OpenRouter.', true);
+    }
+}
 
 function getVisualMemory() {
     const context = SillyTavern.getContext();
@@ -267,11 +295,12 @@ function syncUi() {
     const provider = $('#rvl_provider').val();
     const modelKey = provider === 'google' ? 'googleModel' : 'openrouterModel';
     const selected = s[modelKey];
-    const choices = modelChoices[provider] || [];
+    const choices = choicesFor(provider);
     const modelSelect = $('#rvl_model').empty();
     for (const [value, label] of choices) modelSelect.append($('<option>', { value, text: label }));
     if (!choices.some(([value]) => value === selected)) modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
     modelSelect.val(selected);
+    $('#rvl_refresh_models').prop('disabled', provider !== 'openrouter');
     $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
 }
 
@@ -281,6 +310,7 @@ async function init() {
     $('#extensions_settings2').append(html);
     syncUi();
     $('#rvl_provider').on('change', syncUi);
+    $('#rvl_refresh_models').on('click', refreshOpenRouterCatalog);
     $('#rvl_remember_key').on('change', function () { if (!this.checked) forgetPersistentKey($('#rvl_provider').val()); });
     $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages').on('change', function () {
         const s = settings(); const provider = $('#rvl_provider').val();
@@ -291,6 +321,7 @@ async function init() {
         context.saveSettingsDebounced();
     });
     $('#rvl_scene').on('click', () => run('scene')); $('#rvl_pov').on('click', () => run('pov')); $('#rvl_look').on('click', () => run('look'));
+    if (apiKeyFor('openrouter')) refreshOpenRouterCatalog();
     renderChatActions();
     restoreFeedbackControls();
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => setTimeout(() => {

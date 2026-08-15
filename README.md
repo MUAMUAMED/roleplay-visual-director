@@ -9,6 +9,7 @@ Extensão de imagens para SillyTavern que transforma o contexto recente do rolep
 - **Visual e roupas**: mostra o personagem ativo de corpo inteiro, priorizando roupas, acessórios e estado atual descritos no chat.
 - Usa o avatar do personagem ativo como imagem de referência, quando disponível.
 - Conectores diretos para OpenRouter e Google Gemini.
+- Catálogo dinâmico do OpenRouter: carrega todos os modelos de imagem disponíveis pela API (atualmente 43), incluindo os adicionados depois da instalação.
 - Publica automaticamente cada imagem gerada no chat como uma mensagem visual do sistema.
 - Exibe botões **Cena**, **POV** e **Visual** diretamente acima da caixa de mensagem do chat.
 - Cada imagem no chat tem **👍** para aprová-la como referência de continuidade e **👎** para refazê-la. A próxima imagem envia o avatar e a última imagem aprovada como referências.
@@ -19,7 +20,7 @@ No SillyTavern, abra **Extensions → Install Extension**, cole a URL deste repo
 
 ## Configuração
 
-1. Escolha o provedor e o modelo pelo seletor do painel.
+1. Escolha o provedor e o modelo pelo seletor do painel. Para OpenRouter, clique em **Atualizar todos os modelos** após informar a chave para carregar o catálogo completo.
 2. Cole a chave da API no campo correspondente.
 3. Escolha a proporção e a quantidade de mensagens usadas como contexto.
 4. Clique em um dos três botões de geração.
