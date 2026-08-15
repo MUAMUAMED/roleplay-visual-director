@@ -1,0 +1,32 @@
+<div id="roleplay_visual_director" class="roleplay-visual-director">
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>Roleplay Visual Director</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+      <p class="rvl-muted">Gere imagens a partir da conversa e da referência do personagem ativo.</p>
+      <div class="rvl-grid">
+        <label>Provedor<select id="rvl_provider"><option value="openrouter">OpenRouter</option><option value="google">Google Gemini</option></select></label>
+        <label>Modelo<input id="rvl_model" type="text" list="rvl_openrouter_models"></label>
+        <label>Proporção<select id="rvl_aspect"><option>16:9</option><option>9:16</option><option selected>1:1</option><option>4:3</option><option>3:4</option></select></label>
+        <label>Qualidade<select id="rvl_quality"><option value="auto">Auto</option><option value="low">Baixa</option><option value="medium">Média</option><option value="high">Alta</option></select></label>
+        <label>Mensagens no contexto<input id="rvl_messages" type="number" min="1" max="30"></label>
+      </div>
+      <datalist id="rvl_openrouter_models">
+        <option value="google/gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite Image — econômico</option>
+        <option value="google/gemini-2.5-flash-image">Gemini 2.5 Flash Image — qualidade</option>
+        <option value="black-forest-labs/flux.2-klein-4b">FLUX.2 Klein 4B — cenas baratas</option>
+        <option value="black-forest-labs/flux.2-pro">FLUX.2 Pro — referência e consistência</option>
+      </datalist>
+      <label>Chave da API (somente nesta sessão)<input id="rvl_api_key" type="password" autocomplete="off" placeholder="Cole a chave do provedor selecionado"></label>
+      <p class="rvl-muted">Por segurança, a chave não é salva nas configurações da extensão. Ela some ao recarregar o SillyTavern.</p>
+      <div class="rvl-actions">
+        <button id="rvl_scene" class="menu_button"><i class="fa-solid fa-image"></i> Criar cena</button>
+        <button id="rvl_pov" class="menu_button"><i class="fa-solid fa-eye"></i> Criar POV do jogador</button>
+        <button id="rvl_look" class="menu_button"><i class="fa-solid fa-shirt"></i> Visual e roupas</button>
+      </div>
+      <div id="rvl_status" aria-live="polite"></div>
+      <div id="rvl_result" class="rvl-result"></div>
+    </div>
+  </div>
+</div>

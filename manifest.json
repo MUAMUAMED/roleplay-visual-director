@@ -1,0 +1,11 @@
+{
+  "display_name": "Roleplay Visual Director",
+  "loading_order": 20,
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Roleplay Visual Director contributors",
+  "version": "0.1.0",
+  "homePage": "https://github.com/SEU-USUARIO/roleplay-visual-director",
+  "auto_update": true,
+  "minimum_client_version": "1.15.0"
+}
