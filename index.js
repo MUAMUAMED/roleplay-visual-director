@@ -309,7 +309,9 @@ async function waitForNovitaTask(key, taskId) {
 
 async function generateNovitaNative(key, model, prompt, references, width, height, aspectRatio) {
     const images = references.slice(0, 4).map(reference => reference.dataUrl);
-    const size = `${width}x${height}`;
+    // A API nativa da Novita aceita dimensões no formato "largura*altura",
+    // diferente de APIs que usam "larguraxaltura".
+    const size = `${width}*${height}`;
     const native = {
         'novita/z-image-turbo-lora': { endpoint: 'z-image-turbo-lora', body: { prompt, size, seed: -1 } },
         'novita/z-image-turbo': { endpoint: 'z-image-turbo', body: { prompt, size, seed: -1 } },
