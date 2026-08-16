@@ -309,23 +309,26 @@ async function waitForNovitaTask(key, taskId) {
 
 async function generateNovitaNative(key, model, prompt, references, width, height, aspectRatio) {
     const images = references.slice(0, 4).map(reference => reference.dataUrl);
-    // A API nativa da Novita aceita dimensões no formato "largura*altura",
-    // diferente de APIs que usam "larguraxaltura".
-    const size = `${width}*${height}`;
+    // FLUX 2 aceita "largura*altura". Seedream usa "larguraxaltura".
+    const fluxSize = `${width}*${height}`;
+    const seedreamSize = `${width}x${height}`;
+    // FLUX 2 só aceita URLs públicas de referência. Os avatares locais do
+    // SillyTavern são data URLs e faziam a tarefa falhar durante a execução.
+    const publicImages = images.filter(image => /^https?:\/\//i.test(image));
     const native = {
-        'novita/z-image-turbo-lora': { endpoint: 'z-image-turbo-lora', body: { prompt, size, seed: -1 } },
-        'novita/z-image-turbo': { endpoint: 'z-image-turbo', body: { prompt, size, seed: -1 } },
-        'novita/flux-2-pro': { endpoint: 'flux-2-pro', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
-        'novita/flux-2-flex': { endpoint: 'flux-2-flex', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
-        'novita/flux-2-dev': { endpoint: 'flux-2-dev', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
-        'novita/qwen-image-t2i': { endpoint: 'qwen-image-txt2img', body: { prompt, size } },
-        'novita/qwen-image-edit': { endpoint: 'qwen-image-edit', body: { prompt, size, images } },
-        'novita/flux-1-kontext-dev': { endpoint: 'flux-1-kontext-dev', body: { prompt, size, images, seed: -1, num_images: 1, num_inference_steps: 28, guidance_scale: 3.5, output_format: 'jpeg' } },
+        'novita/z-image-turbo-lora': { endpoint: 'z-image-turbo-lora', body: { prompt, size: fluxSize, seed: -1 } },
+        'novita/z-image-turbo': { endpoint: 'z-image-turbo', body: { prompt, size: fluxSize, seed: -1 } },
+        'novita/flux-2-pro': { endpoint: 'flux-2-pro', body: { prompt, size: fluxSize, seed: -1, ...(publicImages.length ? { images: publicImages.slice(0, 3) } : {}) } },
+        'novita/flux-2-flex': { endpoint: 'flux-2-flex', body: { prompt, size: fluxSize, seed: -1, ...(publicImages.length ? { images: publicImages.slice(0, 3) } : {}) } },
+        'novita/flux-2-dev': { endpoint: 'flux-2-dev', body: { prompt, size: fluxSize, seed: -1, ...(publicImages.length ? { images: publicImages.slice(0, 3) } : {}) } },
+        'novita/qwen-image-t2i': { endpoint: 'qwen-image-txt2img', body: { prompt, size: fluxSize } },
+        'novita/qwen-image-edit': { endpoint: 'qwen-image-edit', body: { prompt, size: fluxSize, images } },
+        'novita/flux-1-kontext-dev': { endpoint: 'flux-1-kontext-dev', body: { prompt, size: fluxSize, images, seed: -1, num_images: 1, num_inference_steps: 28, guidance_scale: 3.5, output_format: 'jpeg' } },
         'novita/flux-1-kontext-pro': { endpoint: 'flux-1-kontext-pro', body: { prompt, images, seed: -1, guidance_scale: 3.5, aspect_ratio: aspectRatio } },
         'novita/flux-1-kontext-max': { endpoint: 'flux-1-kontext-max', body: { prompt, images, seed: -1, guidance_scale: 3.5, aspect_ratio: aspectRatio } },
     }[model];
     if (model === 'novita/seedream-4.0') {
-        const response = await fetch('https://api.novita.ai/v3/seedream-4.0', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, size, images, watermark: false, sequential_image_generation: 'disabled' }) });
+        const response = await fetch('https://api.novita.ai/v3/seedream-4.0', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, size: seedreamSize, images, watermark: false, sequential_image_generation: 'disabled' }) });
         const result = await response.json();
         const imageUrl = typeof result.images?.[0] === 'string' ? result.images[0] : result.images?.[0]?.image_url;
         if (!response.ok || !imageUrl) throw new Error(result.message || result.error?.message || 'Seedream 4.0 da Novita recusou a solicitação.');
