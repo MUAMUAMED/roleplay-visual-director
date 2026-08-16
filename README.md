@@ -5,9 +5,10 @@ Extensão de imagens para SillyTavern que transforma o contexto recente do rolep
 ## Recursos
 
 - **Criar cena**: enquadramento cinematográfico em terceira pessoa.
-- **Criar POV do jogador**: o momento visto pelos olhos do jogador.
+- **Criar POV do jogador**: o momento visto pelos olhos do jogador; a interação é dirigida diretamente à lente, sem criar outro corpo para representar quem está vendo.
 - **Visual e roupas**: mostra o personagem ativo de corpo inteiro, priorizando roupas, acessórios e estado atual descritos no chat.
 - Usa o avatar do personagem ativo como imagem de referência, quando disponível.
+- Pode incluir o avatar do jogador como referência: ele aparece em cenas quando apropriado; em POV, só orienta mãos, braços ou outras partes que realmente poderiam entrar no enquadramento.
 - Conectores diretos para OpenRouter e Google Gemini.
 - Integração Novita AI com uma lista fixa e estável de modelos nativos de geração e edição, adequada para uso em celular.
 - Catálogo dinâmico do OpenRouter: carrega todos os modelos de imagem disponíveis pela API (atualmente 43), incluindo os adicionados depois da instalação.

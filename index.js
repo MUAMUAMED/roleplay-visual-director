@@ -4,7 +4,7 @@ import { saveBase64AsFile } from '../../../../scripts/utils.js';
 const MODULE_NAME = 'roleplay_visual_director';
 const SESSION_KEY = `${MODULE_NAME}_api_keys`;
 const PERSISTENT_KEY = `${MODULE_NAME}_saved_api_keys`;
-const defaults = Object.freeze({ provider: 'openrouter', openrouterModel: 'google/gemini-2.5-flash-image', googleModel: 'gemini-3.1-flash-image', novitaModel: 'sd_xl_base_1.0.safetensors', aspectRatio: '1:1', quality: 'auto', messages: 8 });
+const defaults = Object.freeze({ provider: 'openrouter', openrouterModel: 'google/gemini-2.5-flash-image', googleModel: 'gemini-3.1-flash-image', novitaModel: 'sd_xl_base_1.0.safetensors', aspectRatio: '1:1', quality: 'auto', messages: 8, includePlayerReference: true });
 const modelChoices = Object.freeze({
     openrouter: [
         ['google/gemini-3.1-flash-lite-image', 'Gemini 3.1 Flash Lite Image — econômico'],
@@ -164,6 +164,26 @@ function dataUrlToImage(dataUrl) {
     return match ? { mimeType: match[1], data: match[2], dataUrl } : null;
 }
 
+async function loadImageReference(url, name, role) {
+    if (!url) return null;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const blob = await response.blob();
+        const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
+        return image ? { ...image, name, role } : null;
+    } catch { return null; }
+}
+
+function playerAvatarSource() {
+    const selectors = ['#user_avatar_block .avatar.selected img', '#user_avatar_block .selected img', '#user_avatar_block .avatar img', '#chat .mes[is_user="true"] .avatar img', '#chat .mes .avatar img[src*="User Avatars"]', '#chat .mes .avatar img[src*="User%20Avatars"]'];
+    for (const selector of selectors) {
+        const source = $(selector).first().attr('src');
+        if (source) return source;
+    }
+    return '';
+}
+
 async function characterReferences() {
     const context = SillyTavern.getContext();
     const allCharacters = context.characters || [];
@@ -178,16 +198,12 @@ async function characterReferences() {
     const characters = activeGroup
         ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
         : (active?.avatar ? [active] : []);
-    const references = await Promise.all(characters.map(async character => {
-        try {
-            const response = await fetch(`/characters/${encodeURIComponent(character.avatar)}`);
-            if (!response.ok) return null;
-            const blob = await response.blob();
-            const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
-            return image ? { ...image, name: character.name } : null;
-        } catch { return null; }
-    }));
+    const references = await Promise.all(characters.map(character => loadImageReference(`/characters/${encodeURIComponent(character.avatar)}`, character.name, 'character')));
     const validReferences = references.filter(Boolean);
+    if (settings().includePlayerReference) {
+        const playerReference = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
+        if (playerReference) validReferences.push(playerReference);
+    }
     const approved = getVisualMemory().lastApprovedImage;
     if (approved?.url) {
         try {
@@ -195,7 +211,7 @@ async function characterReferences() {
             if (response.ok) {
                 const blob = await response.blob();
                 const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
-                if (image) validReferences.push({ ...image, name: 'approved continuity image', continuity: true });
+                if (image) validReferences.push({ ...image, name: 'approved continuity image', continuity: true, role: 'continuity' });
             }
         } catch { console.warn(`[${MODULE_NAME}] Could not load approved continuity image.`); }
     }
@@ -213,14 +229,16 @@ function buildPrompt(mode, references) {
     const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : currentCharacterName()}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
     const modeInstruction = {
         scene: 'Create a cinematic third-person scene from the current roleplay moment.',
-        pov: 'Create a true first-person roleplay image: the camera is physically the adult male player\'s eyes, at his natural eye level, never a detached spectator camera. Render the spatial scale, angle, depth, and distance exactly as the player would see them. The player may appear only as natural foreground hands or lower arms. Place the active character at the precise distance stated or implied by the roleplay; during close moments, frame that character close to the camera so they fill the view naturally.',
+        pov: 'Create a true first-person roleplay image: the camera IS physically the adult male player\'s eyes, at his natural eye level. This is an embodied, camera-facing interaction, never a detached spectator image. The roleplay partner must act toward the lens: look at the lens, speak to the lens, reach toward the lens, hold an offered object toward the lens, or touch near the lens when the context implies contact. Render the exact distance, scale, angle, depth, and intimacy as the player would see it. The player is behind the camera and MUST NOT be drawn as a separate standing, seated, facing, over-the-shoulder, or duplicate person. Only the player\'s natural foreground hands, lower arms, knees, legs, or shoes may enter the frame when contextually visible; use the player avatar only to keep those visible parts consistent. Place the active character close to the lens during close moments so they fill the view naturally.',
         look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player\'s point of view as if standing in front of them.`,
     }[mode];
     const approvedContinuity = references.some(reference => reference.continuity);
     const referenceRoles = references.length
         ? references.map((reference, index) => reference.continuity
             ? `Image ${index + 1}: the approved previous scene. Use it as the continuity reference for the same clothing, accessories, setting, and visual style.`
-            : `Image ${index + 1}: ${reference.name}'s profile image. Use it as the authoritative visual identity reference for that character.`).join('\n')
+            : reference.role === 'player'
+                ? `Image ${index + 1}: ${reference.name}'s player avatar. Use it as the authoritative identity only when the player is visibly present in a third-person scene or as natural foreground body parts in POV.`
+                : `Image ${index + 1}: ${reference.name}'s profile image. Use it as the authoritative visual identity reference for that character.`).join('\n')
         : 'There are no visual references for this request.';
     return `${modeInstruction}
 
@@ -232,6 +250,9 @@ Render the same recognizable character(s) shown in their profile references. Kee
 
 CAST COMPOSITION:
 For romance or close relationship scenes, depict exactly one adult man: the male player. The remaining people are only the character partner(s) described in the roleplay. Never add a second man, male observer, male partner, or male bystander. Keep this cast and the described relationship dynamics consistent in both POV and third-person scenes.
+
+POV CAMERA RULE (applies only to POV):
+The lens is the player's face and viewpoint, not a camera filming the player. Do not show a second figure as the player, do not show the player from behind, and do not create an over-the-shoulder composition. All interaction from the partner is directed to the lens/player. A player avatar reference must never cause an additional visible person in a POV image.
 
 CONTINUITY LOCK:
 ${approvedContinuity ? 'Use the final approved reference to continue its established character identity, clothing, accessories, setting, pose logic, and visual style whenever the recent roleplay does not explicitly change them.' : 'Derive clothing, accessories, condition, and setting from the recent roleplay context, carrying forward the established appearance when no change is described.'}
@@ -485,7 +506,7 @@ function syncUi() {
     if (!choices.some(([value]) => value === selected)) modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
     modelSelect.val(selected);
     $('#rvl_catalog_tools').toggle(provider === 'openrouter');
-    $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
+    $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_player_reference').prop('checked', Boolean(s.includePlayerReference)); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
 }
 
 async function init() {
@@ -496,11 +517,12 @@ async function init() {
     $('#rvl_provider').on('change', syncUi);
     $('#rvl_refresh_models').on('click', refreshOpenRouterCatalog);
     $('#rvl_remember_key').on('change', function () { if (!this.checked) forgetPersistentKey($('#rvl_provider').val()); });
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages').on('change', function () {
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference').on('change', function () {
         const s = settings(); const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
         else if (this.id === 'rvl_aspect') s.aspectRatio = this.value;
         else if (this.id === 'rvl_quality') s.quality = this.value;
+        else if (this.id === 'rvl_player_reference') s.includePlayerReference = this.checked;
         else s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
         context.saveSettingsDebounced();
     });
