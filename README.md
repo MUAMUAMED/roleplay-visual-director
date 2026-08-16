@@ -32,7 +32,8 @@ Por padrão, as chaves ficam apenas durante a sessão. A opção **Lembrar esta 
 
 - OpenRouter: um modelo com saída de imagem e entrada de imagem, como `google/gemini-2.5-flash-image`.
 - Google: `gemini-3.1-flash-image`.
-- Novita AI: escolha qualquer checkpoint do catálogo. A extensão usa o endpoint padrão de texto-para-imagem ou imagem-para-imagem da Novita; neste último caso, reúne os avatares e a última imagem aprovada com **👍** em uma única referência visual. A opção nativa **FLUX.1 Schnell** é econômica e foi testada, mas gera somente a partir de texto.
+- Novita AI: escolha qualquer checkpoint do catálogo. A extensão usa o endpoint padrão de texto-para-imagem ou imagem-para-imagem da Novita; neste último caso, reúne os avatares e a última imagem aprovada com **👍** em uma única referência visual.
+- A Novita limita o prompt a 1.024 caracteres; a extensão reduz automaticamente o contexto somente nesse provedor, preservando as instruções visuais e o trecho mais recente do RP.
 
 O OpenRouter informa, pela própria API, quais modelos aceitam imagens de referência. Caso o modelo escolhido não aceite referência, ele poderá gerar somente com o texto do contexto.
 

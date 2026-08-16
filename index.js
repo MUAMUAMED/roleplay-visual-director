@@ -22,9 +22,6 @@ const modelChoices = Object.freeze({
 });
 let openRouterCatalog = [];
 let novitaCatalog = [];
-const novitaNativeModels = Object.freeze([
-    { id: 'novita/flux-1-schnell', name: 'FLUX.1 Schnell — Novita (econômico, texto somente)', baseModel: 'modelo nativo' },
-]);
 
 function settings() {
     const context = SillyTavern.getContext();
@@ -54,7 +51,7 @@ function choicesFor(provider) {
         const displayName = model.name || model.id;
         return [model.id, `${displayName}${acceptsReferences ? ' — aceita referências' : ''}`];
     });
-    if (provider === 'novita' && novitaCatalog.length) return [...novitaNativeModels, ...novitaCatalog].map(model => [model.id, `${model.name} — ${model.baseModel || 'checkpoint'}`]);
+    if (provider === 'novita' && novitaCatalog.length) return novitaCatalog.map(model => [model.id, `${model.name} — ${model.baseModel || 'checkpoint'}`]);
     return modelChoices[provider] || [];
 }
 
@@ -267,6 +264,19 @@ function aspectSize(aspectRatio) {
 
 function wait(milliseconds) { return new Promise(resolve => setTimeout(resolve, milliseconds)); }
 
+function novitaSafePrompt(prompt) {
+    const characters = Array.from(prompt || '');
+    if (characters.length <= 1024) return prompt;
+    const contextMarker = '\n\nCurrent roleplay context:\n';
+    const markerIndex = prompt.indexOf(contextMarker);
+    if (markerIndex < 0) return characters.slice(0, 1024).join('');
+    const instructions = Array.from(prompt.slice(0, markerIndex));
+    const context = Array.from(prompt.slice(markerIndex + contextMarker.length));
+    const contextBudget = 300;
+    const instructionBudget = 1024 - Array.from(contextMarker).length - contextBudget;
+    return `${instructions.slice(0, instructionBudget).join('')}${contextMarker}${context.slice(-contextBudget).join('')}`;
+}
+
 async function novitaReferenceSheet(references) {
     const selected = references.slice(0, 4);
     if (selected.length <= 1) return selected[0] || null;
@@ -299,20 +309,8 @@ async function novitaReferenceSheet(references) {
 async function generateNovita(key, prompt, references) {
     const s = settings();
     const [width, height] = aspectSize(s.aspectRatio);
-    if (s.novitaModel === 'novita/flux-1-schnell') {
-        const response = await fetch('https://api.novita.ai/v3beta/flux-1-schnell', {
-            method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, width, height, seed: Math.floor(Math.random() * 4294967295), steps: 4, image_num: 1, response_image_format: 'jpeg' }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.images?.[0]?.image_url) throw new Error(result.message || result.error?.message || 'FLUX.1 Schnell da Novita recusou a solicitação.');
-        const imageResponse = await fetch(result.images[0].image_url);
-        if (!imageResponse.ok) throw new Error('A Novita gerou a imagem, mas ela não pôde ser baixada.');
-        const blob = await imageResponse.blob();
-        const dataUrl = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
-        return { dataUrl };
-    }
-    const request = { model_name: s.novitaModel, prompt, width, height, image_num: 1, steps: 28, seed: -1, clip_skip: 1, guidance_scale: 6.5, sampler_name: 'Euler' };
+    const safePrompt = novitaSafePrompt(prompt);
+    const request = { model_name: s.novitaModel, prompt: safePrompt, width, height, image_num: 1, steps: 28, seed: -1, clip_skip: 1, guidance_scale: 6.5, sampler_name: 'Euler' };
     // Standard Novita img2img accepts one base image. A contact sheet preserves
     // both the active avatar(s) and the image approved with 👍 in that slot.
     const baseReference = await novitaReferenceSheet(references);
