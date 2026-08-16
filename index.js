@@ -17,7 +17,18 @@ const modelChoices = Object.freeze({
         ['gemini-3.1-flash-image', 'Gemini 3.1 Flash Image'],
     ],
     novita: [
-        ['sd_xl_base_1.0.safetensors', 'SDXL Base 1.0 — catálogo Novita'],
+        ['sd_xl_base_1.0.safetensors', 'SDXL Base 1.0'],
+        ['novita/z-image-turbo-lora', 'Z Image Turbo LoRA'],
+        ['novita/z-image-turbo', 'Z Image Turbo'],
+        ['novita/flux-2-pro', 'FLUX 2 Pro'],
+        ['novita/flux-2-flex', 'FLUX 2 Flex'],
+        ['novita/flux-2-dev', 'FLUX 2 Dev'],
+        ['novita/seedream-4.0', 'Seedream 4.0'],
+        ['novita/qwen-image-t2i', 'Qwen-Image Text to Image'],
+        ['novita/qwen-image-edit', 'Qwen-Image Edit'],
+        ['novita/flux-1-kontext-dev', 'FLUX.1 Kontext Dev'],
+        ['novita/flux-1-kontext-pro', 'FLUX.1 Kontext Pro'],
+        ['novita/flux-1-kontext-max', 'FLUX.1 Kontext Max'],
     ],
 });
 let openRouterCatalog = [];
@@ -51,7 +62,7 @@ function choicesFor(provider) {
         const displayName = model.name || model.id;
         return [model.id, `${displayName}${acceptsReferences ? ' — aceita referências' : ''}`];
     });
-    if (provider === 'novita' && novitaCatalog.length) return novitaCatalog.map(model => [model.id, `${model.name} — ${model.baseModel || 'checkpoint'}`]);
+    if (provider === 'novita') return modelChoices.novita;
     return modelChoices[provider] || [];
 }
 
@@ -277,6 +288,54 @@ function novitaSafePrompt(prompt) {
     return `${instructions.slice(0, instructionBudget).join('')}${contextMarker}${context.slice(-contextBudget).join('')}`;
 }
 
+async function novitaImageFromUrl(url) {
+    const imageResponse = await fetch(url);
+    if (!imageResponse.ok) throw new Error('A Novita gerou a imagem, mas ela não pôde ser baixada.');
+    const blob = await imageResponse.blob();
+    return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+}
+
+async function waitForNovitaTask(key, taskId) {
+    for (let attempt = 0; attempt < 60; attempt++) {
+        await wait(1000);
+        const resultResponse = await fetch(`https://api.novita.ai/v3/async/task-result?task_id=${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${key}` } });
+        const result = await resultResponse.json();
+        const status = result.task?.status;
+        if (status === 'TASK_STATUS_SUCCEED' && result.images?.[0]?.image_url) return { dataUrl: await novitaImageFromUrl(result.images[0].image_url) };
+        if (status === 'TASK_STATUS_FAILED' || status === 'TASK_STATUS_ERROR') throw new Error(result.task?.reason || 'A Novita não conseguiu gerar a imagem.');
+    }
+    throw new Error('A Novita demorou mais de 60 segundos para responder.');
+}
+
+async function generateNovitaNative(key, model, prompt, references, width, height, aspectRatio) {
+    const images = references.slice(0, 4).map(reference => reference.dataUrl);
+    const size = `${width}x${height}`;
+    const native = {
+        'novita/z-image-turbo-lora': { endpoint: 'z-image-turbo-lora', body: { prompt, size, seed: -1 } },
+        'novita/z-image-turbo': { endpoint: 'z-image-turbo', body: { prompt, size, seed: -1 } },
+        'novita/flux-2-pro': { endpoint: 'flux-2-pro', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
+        'novita/flux-2-flex': { endpoint: 'flux-2-flex', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
+        'novita/flux-2-dev': { endpoint: 'flux-2-dev', body: { prompt, size, seed: -1, ...(images.length ? { images } : {}) } },
+        'novita/qwen-image-t2i': { endpoint: 'qwen-image-txt2img', body: { prompt, size } },
+        'novita/qwen-image-edit': { endpoint: 'qwen-image-edit', body: { prompt, size, images } },
+        'novita/flux-1-kontext-dev': { endpoint: 'flux-1-kontext-dev', body: { prompt, size, images, seed: -1, num_images: 1, num_inference_steps: 28, guidance_scale: 3.5, output_format: 'jpeg' } },
+        'novita/flux-1-kontext-pro': { endpoint: 'flux-1-kontext-pro', body: { prompt, images, seed: -1, guidance_scale: 3.5, aspect_ratio: aspectRatio } },
+        'novita/flux-1-kontext-max': { endpoint: 'flux-1-kontext-max', body: { prompt, images, seed: -1, guidance_scale: 3.5, aspect_ratio: aspectRatio } },
+    }[model];
+    if (model === 'novita/seedream-4.0') {
+        const response = await fetch('https://api.novita.ai/v3/seedream-4.0', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, size, images, watermark: false, sequential_image_generation: 'disabled' }) });
+        const result = await response.json();
+        const imageUrl = typeof result.images?.[0] === 'string' ? result.images[0] : result.images?.[0]?.image_url;
+        if (!response.ok || !imageUrl) throw new Error(result.message || result.error?.message || 'Seedream 4.0 da Novita recusou a solicitação.');
+        return { dataUrl: await novitaImageFromUrl(imageUrl) };
+    }
+    if (!native) return null;
+    const response = await fetch(`https://api.novita.ai/v3/async/${native.endpoint}`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(native.body) });
+    const result = await response.json();
+    if (!response.ok || !result.task_id) throw new Error(result.message || result.error?.message || 'Novita recusou a solicitação.');
+    return waitForNovitaTask(key, result.task_id);
+}
+
 async function novitaReferenceSheet(references) {
     const selected = references.slice(0, 4);
     if (selected.length <= 1) return selected[0] || null;
@@ -310,6 +369,8 @@ async function generateNovita(key, prompt, references) {
     const s = settings();
     const [width, height] = aspectSize(s.aspectRatio);
     const safePrompt = novitaSafePrompt(prompt);
+    const nativeResult = await generateNovitaNative(key, s.novitaModel, safePrompt, references, width, height, s.aspectRatio);
+    if (nativeResult) return nativeResult;
     const request = { model_name: s.novitaModel, prompt: safePrompt, width, height, image_num: 1, steps: 28, seed: -1, clip_skip: 1, guidance_scale: 6.5, sampler_name: 'Euler' };
     // Standard Novita img2img accepts one base image. A contact sheet preserves
     // both the active avatar(s) and the image approved with 👍 in that slot.
@@ -322,21 +383,7 @@ async function generateNovita(key, prompt, references) {
     });
     const submitted = await response.json();
     if (!response.ok || !submitted.task_id) throw new Error(submitted.message || submitted.error?.message || 'Novita recusou a solicitação.');
-    for (let attempt = 0; attempt < 60; attempt++) {
-        await wait(1000);
-        const resultResponse = await fetch(`https://api.novita.ai/v3/async/task-result?task_id=${encodeURIComponent(submitted.task_id)}`, { headers: { Authorization: `Bearer ${key}` } });
-        const result = await resultResponse.json();
-        const status = result.task?.status;
-        if (status === 'TASK_STATUS_SUCCEED' && result.images?.[0]?.image_url) {
-            const imageResponse = await fetch(result.images[0].image_url);
-            if (!imageResponse.ok) throw new Error('A Novita gerou a imagem, mas ela não pôde ser baixada.');
-            const blob = await imageResponse.blob();
-            const dataUrl = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
-            return { dataUrl };
-        }
-        if (status === 'TASK_STATUS_FAILED' || status === 'TASK_STATUS_ERROR') throw new Error(result.task?.reason || 'A Novita não conseguiu gerar a imagem.');
-    }
-    throw new Error('A Novita demorou mais de 60 segundos para responder.');
+    return waitForNovitaTask(key, submitted.task_id);
 }
 
 function showImage(result) {
@@ -432,7 +479,7 @@ function syncUi() {
     for (const [value, label] of choices) modelSelect.append($('<option>', { value, text: label }));
     if (!choices.some(([value]) => value === selected)) modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
     modelSelect.val(selected);
-    $('#rvl_refresh_models').prop('disabled', !['openrouter', 'novita'].includes(provider)).find('.rvl-catalog-label').text(provider === 'novita' ? 'Atualizar todos os modelos Novita' : 'Atualizar todos os modelos');
+    $('#rvl_catalog_tools').toggle(provider === 'openrouter');
     $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
 }
 
@@ -442,7 +489,7 @@ async function init() {
     $('#extensions_settings2').append(html);
     syncUi();
     $('#rvl_provider').on('change', syncUi);
-    $('#rvl_refresh_models').on('click', () => $('#rvl_provider').val() === 'novita' ? refreshNovitaCatalog() : refreshOpenRouterCatalog());
+    $('#rvl_refresh_models').on('click', refreshOpenRouterCatalog);
     $('#rvl_remember_key').on('change', function () { if (!this.checked) forgetPersistentKey($('#rvl_provider').val()); });
     $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages').on('change', function () {
         const s = settings(); const provider = $('#rvl_provider').val();
@@ -454,7 +501,6 @@ async function init() {
     });
     $('#rvl_scene').on('click', () => run('scene')); $('#rvl_pov').on('click', () => run('pov')); $('#rvl_look').on('click', () => run('look'));
     if (apiKeyFor('openrouter')) refreshOpenRouterCatalog();
-    if (apiKeyFor('novita')) refreshNovitaCatalog();
     renderChatActions();
     restoreFeedbackControls();
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => setTimeout(() => {
