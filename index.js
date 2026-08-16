@@ -96,11 +96,14 @@ async function refreshNovitaCatalog() {
                 baseModel: model.base_model,
             })));
             cursor = json.pagination?.next_cursor;
+            // Novita can expose thousands of checkpoints. Populate the select as
+            // soon as the first page arrives instead of making the UI look frozen.
+            novitaCatalog = [...new Map(models.map(model => [model.id, model])).values()].sort((a, b) => a.name.localeCompare(b.name));
+            syncUi();
+            notice(cursor ? `${novitaCatalog.length} modelos Novita carregados; buscando mais…` : `${novitaCatalog.length} modelos de imagem carregados da Novita.`);
+            await wait(0);
         }
-        novitaCatalog = [...new Map(models.map(model => [model.id, model])).values()].sort((a, b) => a.name.localeCompare(b.name));
         if (!novitaCatalog.length) throw new Error('A Novita não retornou checkpoints de imagem disponíveis.');
-        syncUi();
-        notice(`${novitaCatalog.length} modelos de imagem carregados da Novita.`);
     } catch (error) {
         console.error(`[${MODULE_NAME}] Could not load Novita image models.`, error);
         notice(error.message || 'Não foi possível carregar o catálogo Novita.', true);
@@ -135,7 +138,17 @@ async function dislikeImage(messageId, mode) {
         delete memory.lastApprovedImage;
         await context.saveMetadata();
     }
-    run(mode);
+    // SillyTavern 1.14+ provides this context API, which removes the message
+    // from both the visible chat and its saved history before regenerating.
+    if (typeof context.deleteMessage === 'function') {
+        await context.deleteMessage(messageId);
+    } else {
+        context.chat.splice(messageId, 1);
+        $(`#chat .mes[mesid="${messageId}"]`).remove();
+        $('#chat .mes[mesid]').each((index, element) => $(element).attr('mesid', index));
+        await saveChatConditional();
+    }
+    return run(mode);
 }
 
 function dataUrlToImage(dataUrl) {
