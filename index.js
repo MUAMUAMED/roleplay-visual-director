@@ -812,21 +812,31 @@ function showImage(result) {
 function renderChatActions() {
     const context = SillyTavern.getContext();
     const hasRoleplayChat = context.groupId != null || context.characterId != null || Boolean(context.characters?.[context.characterId]?.avatar);
-    const formTarget = $('#send_form, #form_sheld, #send_but').first();
-    if (!hasRoleplayChat || !formTarget.length) {
+    if (!hasRoleplayChat) {
+        $('#rvl_chat_actions').remove();
         return;
     }
-    if ($('#rvl_chat_actions').length) return;
-    const toolbar = $('<div>', { id: 'rvl_chat_actions', class: 'rvl-chat-actions', title: 'Gerar imagem do roleplay' });
-    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'scene', html: '<i class="fa-solid fa-image"></i> Cena' }));
-    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', html: '<i class="fa-solid fa-eye"></i> POV' }));
-    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'look', html: '<i class="fa-solid fa-shirt"></i> Visual' }));
 
-    if ($('#send_form').length) {
-        $('#send_form').before(toolbar);
+    // Se já existe e está no lugar certo, não recria
+    if ($('#rvl_chat_actions').length) return;
+
+    const toolbar = $('<div>', { id: 'rvl_chat_actions', class: 'rvl-chat-actions', title: 'Gerar imagem do roleplay' });
+    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'scene', title: 'Criar Cena', html: '<i class="fa-solid fa-image"></i><span> Cena</span>' }));
+    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', title: 'Criar POV do Jogador', html: '<i class="fa-solid fa-eye"></i><span> POV</span>' }));
+    toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'look', title: 'Visual e Roupas', html: '<i class="fa-solid fa-shirt"></i><span> Visual</span>' }));
+
+    // 1. Tenta anexar ao lado ou dentro da barra de Quick Reply (#qr--bar ou .qr--buttons)
+    const qrBar = $('#qr--bar .qr--buttons').first().length ? $('#qr--bar .qr--buttons').first() : $('#qr--bar').first();
+    if (qrBar.length) {
+        qrBar.append(toolbar);
+    } else if ($('#send_form').length) {
+        // 2. Fallback: logo no topo de #send_form integrado à barra de entrada
+        $('#send_form').prepend(toolbar);
     } else {
-        formTarget.before(toolbar);
+        const fallbackTarget = $('#form_sheld, #send_but').first();
+        if (fallbackTarget.length) fallbackTarget.before(toolbar);
     }
+
     toolbar.on('click', '[data-rvl-mode]', function (event) {
         event.preventDefault();
         event.stopPropagation();
