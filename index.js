@@ -292,6 +292,9 @@ async function imageElementToDataUrl(imgElement) {
     });
 }
 
+/**
+ * Loads image reference prioritising the FULL-RESOLUTION original file on server over cropped thumbnails.
+ */
 async function loadImageReference(urlOrElement, name, role) {
     if (!urlOrElement) return null;
     if (typeof urlOrElement === 'string' && urlOrElement.startsWith('data:image/')) {
@@ -308,18 +311,24 @@ async function loadImageReference(urlOrElement, name, role) {
 
     const url = String(urlOrElement);
     const candidateUrls = [];
+
+    // Extract true file name if given a thumbnail url (e.g. ?file=character.png or /thumbnail?...)
+    let baseFileName = url.replace(/^[/\\]+/, '');
+    if (baseFileName.includes('=')) {
+        baseFileName = baseFileName.substring(baseFileName.lastIndexOf('=') + 1);
+    }
+
+    // 1. Prioridade máxima: Arquivo original em resolução nativa
+    candidateUrls.push(`/characters/${encodeURIComponent(baseFileName)}`);
+    candidateUrls.push(`/characters/${baseFileName}`);
+    candidateUrls.push(`/User%20Avatars/${encodeURIComponent(baseFileName)}`);
+    candidateUrls.push(`/User%20Avatars/${baseFileName}`);
+    candidateUrls.push(`/api/characters/avatar?avatar=${encodeURIComponent(baseFileName)}`);
+
     if (/^https?:\/\//i.test(url) || url.startsWith('data:')) {
         candidateUrls.push(url);
     } else {
-        if (url.startsWith('/')) candidateUrls.push(url);
         candidateUrls.push(url.startsWith('/') ? url : `/${url}`);
-        const clean = url.replace(/^\/+/, '');
-        candidateUrls.push(`/characters/${encodeURIComponent(clean)}`);
-        candidateUrls.push(`/characters/${clean}`);
-        candidateUrls.push(`/User%20Avatars/${encodeURIComponent(clean)}`);
-        candidateUrls.push(`/User%20Avatars/${clean}`);
-        candidateUrls.push(`/api/characters/avatar?avatar=${encodeURIComponent(clean)}`);
-        candidateUrls.push(`/api/avatars/get?avatar=${encodeURIComponent(clean)}`);
     }
 
     for (const candidate of candidateUrls) {
@@ -334,7 +343,9 @@ async function loadImageReference(urlOrElement, name, role) {
                         reader.onerror = () => resolve(null);
                         reader.readAsDataURL(blob);
                     });
-                    if (image) return { ...image, name, role };
+                    if (image) {
+                        return { ...image, name, role };
+                    }
                 }
             }
         } catch {
@@ -407,21 +418,20 @@ async function characterReferences() {
         : (active ? [active] : []);
 
     const references = await Promise.all(charactersToLoad.map(async character => {
-        let avatarUrl = '';
-        if (typeof context.getThumbnailUrl === 'function' && character.avatar) {
-            try { avatarUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
+        // Pede DIRETAMENTE o caminho do arquivo original em alta resolução (/characters/nome.png)
+        let fullResUrl = '';
+        if (character.avatar) {
+            fullResUrl = `/characters/${encodeURIComponent(character.avatar)}`;
         }
-        if (!avatarUrl && character.avatar) {
-            avatarUrl = character.avatar.startsWith('/') || character.avatar.startsWith('http')
-                ? character.avatar
-                : `/characters/${encodeURIComponent(character.avatar)}`;
+        if (!fullResUrl && typeof context.getThumbnailUrl === 'function' && character.avatar) {
+            try { fullResUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
         }
-        if (!avatarUrl) {
+        if (!fullResUrl) {
             const chatAvatarImg = $('#chat .mes[is_user="false"] .avatar img').first().attr('src');
-            if (chatAvatarImg) avatarUrl = chatAvatarImg;
+            if (chatAvatarImg) fullResUrl = chatAvatarImg;
         }
 
-        const ref = await loadImageReference(avatarUrl, character.name || currentCharacterName(), 'character');
+        const ref = await loadImageReference(fullResUrl, character.name || currentCharacterName(), 'character');
         if (ref) {
             if (character.description) ref.charDescription = character.description;
         }
@@ -442,7 +452,16 @@ async function characterReferences() {
     }
 
     if (settings().includePlayerReference) {
-        const playerRef = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
+        // Tenta resolver a foto de perfil original do jogador em alta resolução
+        let playerFullUrl = '';
+        const userAvatarId = context.powerUserSettings?.user_avatar || context.user_avatar;
+        if (userAvatarId) {
+            playerFullUrl = `/User%20Avatars/${encodeURIComponent(userAvatarId)}`;
+        }
+        if (!playerFullUrl) {
+            playerFullUrl = playerAvatarSource();
+        }
+        const playerRef = await loadImageReference(playerFullUrl, context.name1 || 'the player', 'player');
         if (playerRef) validReferences.push(playerRef);
     }
     const approved = getVisualMemory().lastApprovedImage;
@@ -996,7 +1015,7 @@ async function run(mode) {
         notice('Enviando imagem para o chat…');
         const published = await publishToChat(result, mode);
         attachFeedbackControls(published.messageId, published.mode);
-        const refStatus = charRefFound ? 'com referência direta da foto' : '(sem referência)';
+        const refStatus = charRefFound ? 'com referência original em alta resolução' : '(sem referência)';
         notice(result.cost != null ? `Imagem criada ${refStatus}. Custo: US$ ${Number(result.cost).toFixed(4)}.` : `Imagem criada ${refStatus}.`);
     } catch (error) {
         console.error(`[${MODULE_NAME}]`, error);
