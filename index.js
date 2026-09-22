@@ -960,6 +960,24 @@ async function run(mode) {
         const charRefFound = references.some(r => r.role === 'character');
         console.info(`[${MODULE_NAME}] References carregadas:`, references.length, '| Personagem encontrado:', charRefFound);
         
+        // Atualiza painel de depuração para mostrar ao usuário as fotos exatas enviadas
+        if ($('#rvl_debug_thumbs').length) {
+            const thumbsContainer = $('#rvl_debug_thumbs').empty();
+            if (references.length) {
+                $('#rvl_debug_preview').show();
+                references.forEach((ref, idx) => {
+                    if (ref.dataUrl) {
+                        const card = $('<div>', { class: 'rvl-thumb-card' });
+                        card.append($('<img>', { src: ref.dataUrl, alt: ref.name }));
+                        card.append($('<div>', { text: `${ref.name} (${ref.role})` }));
+                        thumbsContainer.append(card);
+                    }
+                });
+            } else {
+                $('#rvl_debug_preview').hide();
+            }
+        }
+
         notice('Gerando imagem… isto pode levar alguns segundos.');
         const prompt = buildPrompt(mode, references);
 
