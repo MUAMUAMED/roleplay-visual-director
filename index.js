@@ -263,21 +263,88 @@ function dataUrlToImage(dataUrl) {
     return match ? { mimeType: match[1], data: match[2], dataUrl } : null;
 }
 
-async function loadImageReference(url, name, role) {
-    if (!url) return null;
-    try {
-        const response = await fetch(url);
-        if (!response.ok) return null;
-        const blob = await response.blob();
-        const image = await new Promise(resolve => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(dataUrlToImage(reader.result));
-            reader.readAsDataURL(blob);
-        });
-        return image ? { ...image, name, role } : null;
-    } catch {
-        return null;
+async function imageElementToDataUrl(imgElement) {
+    if (!imgElement) return null;
+    return new Promise((resolve) => {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = imgElement.naturalWidth || imgElement.width || 400;
+            canvas.height = imgElement.naturalHeight || imgElement.height || 400;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(imgElement, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+        } catch {
+            resolve(null);
+        }
+    });
+}
+
+async function loadImageReference(urlOrElement, name, role) {
+    if (!urlOrElement) return null;
+    if (typeof urlOrElement === 'string' && urlOrElement.startsWith('data:image/')) {
+        const parsed = dataUrlToImage(urlOrElement);
+        return parsed ? { ...parsed, name, role } : null;
     }
+    if (typeof urlOrElement === 'object' && urlOrElement.naturalWidth) {
+        const dataUrl = await imageElementToDataUrl(urlOrElement);
+        if (dataUrl) {
+            const parsed = dataUrlToImage(dataUrl);
+            return parsed ? { ...parsed, name, role } : null;
+        }
+    }
+
+    const url = String(urlOrElement);
+    const candidateUrls = [];
+    if (/^https?:\/\//i.test(url) || url.startsWith('data:')) {
+        candidateUrls.push(url);
+    } else {
+        if (url.startsWith('/')) candidateUrls.push(url);
+        candidateUrls.push(url.startsWith('/') ? url : `/${url}`);
+        if (!url.startsWith('/characters/') && !url.startsWith('characters/')) {
+            candidateUrls.push(`/characters/${encodeURIComponent(url.replace(/^\/+/, ''))}`);
+            candidateUrls.push(`/characters/${url.replace(/^\/+/, '')}`);
+        }
+        candidateUrls.push(`/User%20Avatars/${encodeURIComponent(url.replace(/^\/+/, ''))}`);
+        candidateUrls.push(`/api/characters/avatar?avatar=${encodeURIComponent(url.replace(/^\/+/, ''))}`);
+    }
+
+    for (const candidate of candidateUrls) {
+        try {
+            const response = await fetch(candidate);
+            if (response.ok) {
+                const blob = await response.blob();
+                if (blob && blob.size > 100) {
+                    const image = await new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(dataUrlToImage(reader.result));
+                        reader.onerror = () => resolve(null);
+                        reader.readAsDataURL(blob);
+                    });
+                    if (image) return { ...image, name, role };
+                }
+            }
+        } catch {
+            // try next candidate URL
+        }
+    }
+
+    // Fallback: search rendered DOM img elements in SillyTavern
+    try {
+        const domImgs = $(`#chat .mes[is_user="false"] .avatar img, #rm_info_avatar img, .character_select img[alt="${name}"], img[alt="${name}"]`);
+        for (const el of domImgs.toArray()) {
+            if (el.complete && el.naturalWidth > 0) {
+                const dataUrl = await imageElementToDataUrl(el);
+                if (dataUrl) {
+                    const parsed = dataUrlToImage(dataUrl);
+                    if (parsed) return { ...parsed, name, role };
+                }
+            }
+        }
+    } catch {
+        // DOM fallback failed
+    }
+
+    return null;
 }
 
 function playerAvatarSource() {
@@ -305,15 +372,32 @@ async function characterReferences() {
         : null;
 
     const groupAvatars = new Set(activeGroup?.members || []);
-    const characters = activeGroup
+    const charactersToLoad = activeGroup
         ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
-        : (active?.avatar ? [active] : []);
-    const references = await Promise.all(characters.map(character => loadImageReference(`/characters/${encodeURIComponent(character.avatar)}`, character.name, 'character')));
+        : (active ? [active] : []);
+
+    const references = await Promise.all(charactersToLoad.map(character => {
+        let avatarUrl = '';
+        if (typeof context.getThumbnailUrl === 'function' && character.avatar) {
+            try { avatarUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
+        }
+        if (!avatarUrl && character.avatar) {
+            avatarUrl = character.avatar.startsWith('/') || character.avatar.startsWith('http')
+                ? character.avatar
+                : `/characters/${encodeURIComponent(character.avatar)}`;
+        }
+        if (!avatarUrl) {
+            const chatAvatarImg = $('#chat .mes[is_user="false"] .avatar img').first().attr('src');
+            if (chatAvatarImg) avatarUrl = chatAvatarImg;
+        }
+        return loadImageReference(avatarUrl, character.name || currentCharacterName(), 'character');
+    }));
+
     const validReferences = references.filter(Boolean);
 
     if (settings().includePlayerReference) {
-        const playerReference = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
-        if (playerReference) validReferences.push(playerReference);
+        const playerRef = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
+        if (playerRef) validReferences.push(playerRef);
     }
     const approved = getVisualMemory().lastApprovedImage;
     if (approved?.url) {
@@ -610,9 +694,9 @@ function showImage(result) {
 
 function renderChatActions() {
     const context = SillyTavern.getContext();
-    const hasRoleplayChat = context.groupId != null || Boolean(context.characters?.[context.characterId]?.avatar);
-    if (!hasRoleplayChat || !$('#send_form').length) {
-        $('#rvl_chat_actions').remove();
+    const hasRoleplayChat = context.groupId != null || context.characterId != null || Boolean(context.characters?.[context.characterId]?.avatar);
+    const formTarget = $('#send_form, #form_sheld, #send_but').first();
+    if (!hasRoleplayChat || !formTarget.length) {
         return;
     }
     if ($('#rvl_chat_actions').length) return;
@@ -620,8 +704,17 @@ function renderChatActions() {
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'scene', html: '<i class="fa-solid fa-image"></i> Cena' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', html: '<i class="fa-solid fa-eye"></i> POV' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'look', html: '<i class="fa-solid fa-shirt"></i> Visual' }));
-    $('#send_form').before(toolbar);
-    toolbar.on('click', '[data-rvl-mode]', event => run($(event.currentTarget).data('rvl-mode')));
+
+    if ($('#send_form').length) {
+        $('#send_form').before(toolbar);
+    } else {
+        formTarget.before(toolbar);
+    }
+    toolbar.on('click', '[data-rvl-mode]', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        run($(this).data('rvl-mode'));
+    });
 }
 
 async function publishToChat(result, mode) {
@@ -683,57 +776,69 @@ async function connectChatToProxy() {
             throw new Error('Não foi possível conectar ao Proxy. Verifique a URL ou a chave.');
         }
 
-        // 1. Set Main API to openai (Chat Completion)
-        if ($('#main_api').length) {
-            $('#main_api').val('openai').trigger('change');
+        const context = SillyTavern.getContext();
+
+        // 1. Alternar API para openai e fonte para custom via slash commands / eventos nativos
+        if (typeof context.executeSlashCommandsWithOptions === 'function') {
+            try {
+                await context.executeSlashCommandsWithOptions('/api openai quiet=true');
+            } catch {}
         }
 
-        // 2. Set Chat Completion Source to custom
-        if ($('#chat_completion_source').length) {
-            $('#chat_completion_source').val('custom').trigger('change');
+        // 2. Definir API principal
+        $('#main_api option[value="openai"]').prop('selected', true);
+        $('#main_api').val('openai').trigger('change');
+
+        // 3. Definir fonte de Chat Completion para Custom (OpenAI-compatible)
+        $('#chat_completion_source option[value="custom"]').prop('selected', true);
+        $('#chat_completion_source').val('custom').trigger('change');
+
+        // 4. Preencher Endpoint URL
+        $('#custom_api_url_text, #custom_url, #openai_reverse_proxy').each(function () {
+            $(this).val(url).trigger('input').trigger('change');
+        });
+
+        // 5. Preencher API Key e salvar segredo no SillyTavern
+        $('#api_key_custom, #api_key_openai').each(function () {
+            $(this).val(key).trigger('input').trigger('change');
+        });
+
+        if (typeof context.executeSlashCommandsWithOptions === 'function') {
+            try {
+                await context.executeSlashCommandsWithOptions(`/secret-write key=api_key_custom label="Nosso Proxy" quiet=true ${key}`);
+            } catch {}
         }
 
-        // 3. Set Custom Endpoint URL
-        if ($('#custom_url').length) {
-            $('#custom_url').val(url).trigger('input').trigger('change');
-        }
-        if ($('#openai_reverse_proxy').length) {
-            $('#openai_reverse_proxy').val(url).trigger('input').trigger('change');
-        }
-
-        // 4. Set API Key
-        if ($('#api_key_custom').length) {
-            $('#api_key_custom').val(key).trigger('input').trigger('change');
-        }
-        if ($('#api_key_openai').length) {
-            $('#api_key_openai').val(key).trigger('input').trigger('change');
+        // 6. Configurar objeto interno chatCompletionSettings (oai_settings)
+        if (context.chatCompletionSettings) {
+            context.chatCompletionSettings.chat_completion_source = 'custom';
+            context.chatCompletionSettings.custom_url = url;
+            context.chatCompletionSettings.custom_model = model;
         }
 
-        // 5. Select Chat Model
+        // 7. Configurar campo e seletor de modelo
+        $('#custom_model_id').val(model).trigger('input').trigger('change');
+
         for (const selectId of ['#model_custom_select', '#model_openai_select']) {
-            if ($(selectId).length) {
-                if (!$(selectId).find(`option[value="${model}"]`).length) {
-                    $(selectId).append($('<option>', { value: model, text: model }));
+            const selectEl = $(selectId);
+            if (selectEl.length) {
+                if (!selectEl.find(`option[value="${model}"]`).length) {
+                    selectEl.append($('<option>', { value: model, text: model }));
                 }
-                $(selectId).val(model).trigger('change');
+                selectEl.val(model).trigger('change');
             }
         }
 
-        // 6. Trigger Connect button if present
-        const connectBtn = $('#api_button_custom:visible, #api_button_openai:visible, #api_button:visible').first();
+        // 8. Tentar acionar o botão Conectar do SillyTavern
+        const connectBtn = $('#api_button_openai, #api_button_custom, #api_button').first();
         if (connectBtn.length) {
             connectBtn.trigger('click');
         }
 
-        // 7. Save context settings
-        const context = SillyTavern.getContext();
-        if (context) {
-            if (context.main_api !== undefined) context.main_api = 'openai';
-            if (context.chat_completion_source !== undefined) context.chat_completion_source = 'custom';
-            context.saveSettingsDebounced?.();
-        }
+        // 9. Persistir configurações
+        context.saveSettingsDebounced?.();
 
-        statusEl.addClass('rvl-success').html(`✔ <b>Conectado com sucesso!</b> O SillyTavern agora usa o modelo <code>${model}</code> via nosso Proxy.`);
+        statusEl.addClass('rvl-success').html(`✔ <b>Conectado com sucesso!</b> O SillyTavern foi configurado para o modelo <code>${model}</code> via nosso Proxy.`);
     } catch (err) {
         console.error(`[${MODULE_NAME}] Falha ao conectar chat ao proxy:`, err);
         statusEl.addClass('rvl-error').text(`Erro: ${err.message || 'Falha ao conectar.'}`);
@@ -741,10 +846,15 @@ async function connectChatToProxy() {
 }
 
 async function run(mode) {
-    const provider = $('#rvl_provider').val();
-    const key = $('#rvl_api_key').val().trim() || apiKeyFor(provider);
+    const s = settings();
+    const provider = $('#rvl_provider').length ? ($('#rvl_provider').val() || s.provider || 'proxy') : (s.provider || 'proxy');
+    const inputKey = $('#rvl_api_key').length ? $('#rvl_api_key').val().trim() : '';
+    const key = inputKey || apiKeyFor(provider);
+
     if (!key) return notice('Cole a chave da API para este provedor.', true);
-    saveApiKey(provider, key, $('#rvl_remember_key').prop('checked'));
+    if ($('#rvl_remember_key').length) {
+        saveApiKey(provider, key, $('#rvl_remember_key').prop('checked'));
+    }
 
     try {
         notice('Preparando contexto e referências do personagem…');
