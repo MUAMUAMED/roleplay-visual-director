@@ -464,10 +464,21 @@ async function characterReferences() {
         const playerRef = await loadImageReference(playerFullUrl, context.name1 || 'the player', 'player');
         if (playerRef) validReferences.push(playerRef);
     }
-    const approved = getVisualMemory().lastApprovedImage;
-    if (approved?.url) {
+    // 3. Imagem de continuidade: pega a imagem aprovada com 👍 ou a última imagem gerada no chat!
+    const memory = getVisualMemory();
+    let continuityUrl = memory.lastApprovedImage?.url || memory.lastGeneratedImage?.url;
+
+    // Se não estiver na memória, busca a imagem mais recente do Roleplay Visual Director no histórico do chat
+    if (!continuityUrl) {
+        const lastVisualMsg = (context.chat || []).slice().reverse().find(m => m.extra?.[MODULE_NAME]?.imageUrl);
+        if (lastVisualMsg) {
+            continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
+        }
+    }
+
+    if (continuityUrl) {
         try {
-            const response = await fetch(approved.url);
+            const response = await fetch(continuityUrl);
             if (response.ok) {
                 const blob = await response.blob();
                 const image = await new Promise(resolve => {
@@ -475,10 +486,10 @@ async function characterReferences() {
                     reader.onload = () => resolve(dataUrlToImage(reader.result));
                     reader.readAsDataURL(blob);
                 });
-                if (image) validReferences.push({ ...image, name: 'approved continuity image', continuity: true, role: 'continuity' });
+                if (image) validReferences.push({ ...image, name: 'previous scene image', continuity: true, role: 'continuity' });
             }
         } catch {
-            console.warn(`[${MODULE_NAME}] Could not load approved continuity image.`);
+            console.warn(`[${MODULE_NAME}] Could not load continuity image.`);
         }
     }
     return validReferences.slice(0, 5);
@@ -516,14 +527,19 @@ function buildPrompt(mode, references) {
         look: `Create a clear full-body character reference of ${charName} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player's point of view as if standing in front of them.`,
     }[mode];
 
-    const approvedContinuity = references.some(reference => reference.continuity);
+    const hasContinuityImage = references.some(reference => reference.continuity);
     const referenceRoles = references.length
         ? references.map((reference, index) => reference.continuity
-            ? `Image ${index + 1}: the approved previous scene. Use it as the continuity reference for the same clothing, accessories, setting, and visual style.`
+            ? `Image ${index + 1}: THE PREVIOUS GENERATED SCENE (CONTINUITY REFERENCE). ${charName} was wearing specific clothes, outfit, and accessories in this image. MANDATORY CLOTHING CONTINUITY: You MUST keep ${charName} wearing the EXACT SAME outfit, clothes, and colors as shown in this image, UNLESS the recent roleplay text explicitly states that ${charName} changed clothes, undressed, or put on a new outfit.`
             : reference.role === 'player'
                 ? `Image ${index + 1}: ${reference.name}'s player avatar. Use it as the authoritative identity only when the player is visibly present in a third-person scene or as natural foreground body parts in POV.`
                 : `Image ${index + 1}: PRIMARY CHARACTER REFERENCE for ${reference.name}. You MUST faithfully reproduce this character's exact face, facial features, hair style, hair color, eye color, and overall appearance from this image. Do NOT invent a random character.`).join('\n')
         : 'There are no visual references for this request.';
+
+    const continuityClothingRule = hasContinuityImage
+        ? `\nOUTFIT & CLOTHING CONTINUITY RULE (STRICT):
+Look at the attached previous scene image. Unless the recent conversation explicitly mentions changing clothes, taking off clothes, or wearing something new, ${charName} MUST wear the exact same clothing, colors, and accessories from the previous image.`
+        : '';
 
     return `CRITICAL INSTRUCTION:
 You are generating an image based directly on the attached visual reference images.
@@ -534,6 +550,7 @@ ${modeInstruction}
 MANDATORY CHARACTER LOCK:
 - The character ${charName} in the generated image MUST match the visual identity, face structure, eye color, and hair style from the attached character reference image.
 - Do NOT replace ${charName} with a generic or random person. Maintain complete fidelity to the reference image.
+${continuityClothingRule}
 
 CAST COMPOSITION:
 Depict exactly ${charName} and the interaction with the player. In POV mode, only show ${charName} in front of the lens.
@@ -863,6 +880,14 @@ async function publishToChat(result, mode) {
     context.chat.push(message);
     addOneMessage(message);
     await saveChatConditional();
+
+    // Atualiza automaticamente a memória de continuidade visual com a última imagem gerada
+    try {
+        const memory = getVisualMemory();
+        memory.lastGeneratedImage = { url, mode, timestamp: Date.now() };
+        await context.saveMetadata();
+    } catch {}
+
     return { messageId: context.chat.length - 1, mode };
 }
 
