@@ -25,8 +25,8 @@ const defaults = Object.freeze({
 
 const modelChoices = Object.freeze({
     proxy: [
-        ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas)'],
-        ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente'],
+        ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)'],
+        ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente (com Análise de Visão)'],
         ['google1/gemini-3.1-flash-image', 'Google Conta 1 — Gemini 3.1 Flash Image'],
         ['google2/gemini-3.1-flash-image', 'Google Conta 2 — Gemini 3.1 Flash Image'],
         ['google3/gemini-3.1-flash-image', 'Google Conta 3 — Gemini 3.1 Flash Image'],
@@ -153,12 +153,12 @@ async function refreshProxyCatalog() {
         const targetList = imageModels.length ? imageModels : allModels;
         proxyCatalog = targetList.map(m => {
             let label = m.id;
-            if (m.id === 'gemini-3.1-flash-image') label = 'Google Gemini — Pool Automático (7 Contas)';
+            if (m.id === 'gemini-3.1-flash-image') label = 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)';
             else if (m.id.startsWith('google') && m.id.includes('image')) {
                 const acct = m.id.split('/')[0];
                 label = `${acct.toUpperCase()} — ${m.id}`;
             } else if (m.id === 'gpt-image-2.5') {
-                label = 'GPT Image 2.5 — OpenAI Mais Potente';
+                label = 'GPT Image 2.5 — OpenAI Mais Potente (com Análise de Visão)';
             }
             return { id: m.id, name: label };
         }).sort((a, b) => a.id.localeCompare(b.id));
@@ -514,6 +514,49 @@ Current roleplay context:
 ${history || 'No chat messages are available.'}`;
 }
 
+/**
+ * Uses GPT-5.5 (Vision) to analyze the character reference image and extract exact visual traits
+ * to inject into GPT Image prompt.
+ */
+async function analyzeCharacterVisualsWithGpt(url, key, charRef, charName) {
+    if (!charRef?.dataUrl) return '';
+    try {
+        const res = await fetch(`${url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: 'gpt-5.5',
+                messages: [{
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: `Describe the visual appearance of the character ${charName} in this reference image in 3-4 concise sentences for an image generation prompt. Include: gender, approximate age, art style (anime, realistic, 3D), hair color and hairstyle, eye color, facial features, skin tone, and notable clothing or accessories. Output ONLY the visual description.`
+                        },
+                        {
+                            type: 'image_url',
+                            image_url: { url: charRef.dataUrl }
+                        }
+                    ]
+                }],
+                max_tokens: 250,
+            }),
+        });
+        const json = await res.json();
+        const description = json.choices?.[0]?.message?.content?.trim();
+        if (description) {
+            console.info(`[${MODULE_NAME}] Análise visual de ${charName} via GPT-5.5:`, description);
+            return description;
+        }
+    } catch (err) {
+        console.warn(`[${MODULE_NAME}] Não foi possível analisar imagem via GPT-5.5:`, err);
+    }
+    return '';
+}
+
 async function generateProxy(key, prompt, references) {
     const s = settings();
     const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
@@ -562,6 +605,21 @@ async function generateProxy(key, prompt, references) {
         }
         return { dataUrl: imageUrl };
     } else {
+        // Modelos GPT (como gpt-image-2.5): são chamados via /images/generations (que recebe texto).
+        // Se houver uma referência visual do personagem, usamos GPT-5.5 com Visão para ler a foto
+        // do avatar e transcrever o visual exato no prompt do gpt-image-2.5!
+        const charRef = references.find(r => r.role === 'character');
+        const charName = currentCharacterName();
+        let enrichedPrompt = prompt;
+
+        if (charRef?.dataUrl) {
+            notice('Analisando o avatar com GPT-5.5 Visão para fidelidade visual…');
+            const visualDescription = await analyzeCharacterVisualsWithGpt(url, key, charRef, charName);
+            if (visualDescription) {
+                enrichedPrompt = `EXACT CHARACTER APPEARANCE (MANDATORY):\n${visualDescription}\n\nSCENE PROMPT:\n${prompt}`;
+            }
+        }
+
         const [width, height] = aspectSize(s.aspectRatio);
         const rawSize = `${width}x${height}`;
         const allowedSizes = new Set(['1024x1024', '1792x1024', '1024x1792', '1024x768', '768x1024']);
@@ -575,7 +633,7 @@ async function generateProxy(key, prompt, references) {
             },
             body: JSON.stringify({
                 model,
-                prompt,
+                prompt: enrichedPrompt,
                 size,
             }),
         });
