@@ -12,7 +12,7 @@ const DEFAULT_PROXY_KEY = 'sk-antigravity21-secure-key';
 const defaults = Object.freeze({
     provider: 'proxy',
     proxyUrl: DEFAULT_PROXY_URL_EXTERNAL,
-    proxyModel: 'gemini-3.1-flash-image',
+    proxyModel: 'gpt-image-2.5',
     proxyChatModel: 'gemini-3.8-flash-high',
     openrouterModel: 'google/gemini-2.5-flash-image',
     googleModel: 'gemini-3.1-flash-image',
@@ -21,6 +21,7 @@ const defaults = Object.freeze({
     quality: 'auto',
     messages: 8,
     includePlayerReference: true,
+    includeContinuity: true,
 });
 
 const modelChoices = Object.freeze({
@@ -464,32 +465,34 @@ async function characterReferences() {
         const playerRef = await loadImageReference(playerFullUrl, context.name1 || 'the player', 'player');
         if (playerRef) validReferences.push(playerRef);
     }
-    // 3. Imagem de continuidade: pega a imagem aprovada com 👍 ou a última imagem gerada no chat!
-    const memory = getVisualMemory();
-    let continuityUrl = memory.lastApprovedImage?.url || memory.lastGeneratedImage?.url;
+    // 3. Imagem de continuidade: pega a imagem aprovada com 👍 ou a última imagem gerada no chat (se ativada a continuidade)!
+    if (settings().includeContinuity !== false) {
+        const memory = getVisualMemory();
+        let continuityUrl = memory.lastApprovedImage?.url || memory.lastGeneratedImage?.url;
 
-    // Se não estiver na memória, busca a imagem mais recente do Roleplay Visual Director no histórico do chat
-    if (!continuityUrl) {
-        const lastVisualMsg = (context.chat || []).slice().reverse().find(m => m.extra?.[MODULE_NAME]?.imageUrl);
-        if (lastVisualMsg) {
-            continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
-        }
-    }
-
-    if (continuityUrl) {
-        try {
-            const response = await fetch(continuityUrl);
-            if (response.ok) {
-                const blob = await response.blob();
-                const image = await new Promise(resolve => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(dataUrlToImage(reader.result));
-                    reader.readAsDataURL(blob);
-                });
-                if (image) validReferences.push({ ...image, name: 'previous scene image', continuity: true, role: 'continuity' });
+        // Se não estiver na memória, busca a imagem mais recente do Roleplay Visual Director no histórico do chat (que não tenha sido excluída)
+        if (!continuityUrl) {
+            const lastVisualMsg = (context.chat || []).slice().reverse().find(m => m.extra?.[MODULE_NAME]?.imageUrl && !m.extra[MODULE_NAME].excludedFromContinuity);
+            if (lastVisualMsg) {
+                continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
             }
-        } catch {
-            console.warn(`[${MODULE_NAME}] Could not load continuity image.`);
+        }
+
+        if (continuityUrl) {
+            try {
+                const response = await fetch(continuityUrl);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const image = await new Promise(resolve => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(dataUrlToImage(reader.result));
+                        reader.readAsDataURL(blob);
+                    });
+                    if (image) validReferences.push({ ...image, name: 'previous scene image', continuity: true, role: 'continuity' });
+                }
+            } catch {
+                console.warn(`[${MODULE_NAME}] Could not load continuity image.`);
+            }
         }
     }
     return validReferences.slice(0, 5);
@@ -957,11 +960,39 @@ function attachFeedbackControls(messageId, mode) {
     const messageElement = $(`#chat .mes[mesid="${messageId}"]`).length ? $(`#chat .mes[mesid="${messageId}"]`) : $('#chat .mes').last();
     if (!messageElement.length || messageElement.find(`#rvl_feedback_${messageId}`).length) return;
     const feedback = $('<div>', { id: `rvl_feedback_${messageId}`, class: 'rvl-feedback' });
-    feedback.append($('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: usar como referência de continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' }));
+    feedback.append($('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: fixar como referência de roupa e continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' }));
+    feedback.append($('<button>', { class: 'menu_button rvl-remove-ref', type: 'button', title: 'Remover referência desta imagem (não usar na próxima)', html: '<i class="fa-solid fa-ban"></i>' }));
     feedback.append($('<button>', { class: 'menu_button rvl-dislike', type: 'button', title: 'Refazer esta imagem', html: '<i class="fa-solid fa-thumbs-down"></i>' }));
     feedback.on('click', '.rvl-like', () => approveImage(messageId));
+    feedback.on('click', '.rvl-remove-ref', () => removeImageFromContinuity(messageId));
     feedback.on('click', '.rvl-dislike', () => dislikeImage(messageId, mode));
     messageElement.append(feedback);
+}
+
+async function removeImageFromContinuity(messageId) {
+    const context = SillyTavern.getContext();
+    const memory = getVisualMemory();
+    const record = context.chat?.[messageId]?.extra?.[MODULE_NAME];
+    
+    // Limpa a memória de continuidade se for essa imagem
+    if (record?.imageUrl) {
+        if (memory.lastApprovedImage?.url === record.imageUrl) {
+            delete memory.lastApprovedImage;
+        }
+        if (memory.lastGeneratedImage?.url === record.imageUrl) {
+            delete memory.lastGeneratedImage;
+        }
+        // Marca a mensagem para ser ignorada em buscas futuras
+        if (context.chat?.[messageId]?.extra?.[MODULE_NAME]) {
+            context.chat[messageId].extra[MODULE_NAME].excludedFromContinuity = true;
+        }
+    } else {
+        delete memory.lastApprovedImage;
+        delete memory.lastGeneratedImage;
+    }
+    await context.saveMetadata();
+    $(`#rvl_feedback_${messageId} .rvl-remove-ref`).addClass('rvl-excluded').attr('title', 'Imagem removida das referências');
+    notice('Esta imagem não será usada como referência para as próximas gerações.');
 }
 
 function restoreFeedbackControls() {
@@ -1086,6 +1117,7 @@ async function run(mode) {
                         const card = $('<div>', { class: 'rvl-thumb-card' });
                         card.append($('<img>', { src: ref.dataUrl, alt: ref.name }));
                         card.append($('<div>', { text: `${ref.name} (${ref.role})` }));
+                        card.append($('<a>', { href: ref.dataUrl, target: '_blank', text: 'Abrir em tela cheia' }));
                         thumbsContainer.append(card);
                     }
                 });
@@ -1147,6 +1179,7 @@ function syncUi() {
     $('#rvl_quality').val(s.quality);
     $('#rvl_messages').val(s.messages);
     $('#rvl_player_reference').prop('checked', Boolean(s.includePlayerReference));
+    $('#rvl_include_continuity').prop('checked', s.includeContinuity !== false);
     $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
     $('#rvl_chat_model').val(s.proxyChatModel || 'gemini-3.8-flash-high');
 }
@@ -1189,17 +1222,26 @@ async function init() {
 
     $('#rvl_connect_chat_btn').on('click', connectChatToProxy);
 
+    $('#rvl_clear_continuity').on('click', function () {
+        const memory = getVisualMemory();
+        delete memory.lastApprovedImage;
+        delete memory.lastGeneratedImage;
+        SillyTavern.getContext().saveMetadata();
+        notice('Memória de roupa e cena anterior foi limpa com sucesso. A próxima imagem usará somente o avatar original.');
+    });
+
     $('#rvl_remember_key').on('change', function () {
         if (!this.checked) forgetPersistentKey($('#rvl_provider').val());
     });
 
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_chat_model').on('change', function () {
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_chat_model').on('change', function () {
         const s = settings();
         const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
         else if (this.id === 'rvl_aspect') s.aspectRatio = this.value;
         else if (this.id === 'rvl_quality') s.quality = this.value;
         else if (this.id === 'rvl_player_reference') s.includePlayerReference = this.checked;
+        else if (this.id === 'rvl_include_continuity') s.includeContinuity = this.checked;
         else if (this.id === 'rvl_chat_model') s.proxyChatModel = this.value;
         else if (this.id === 'rvl_messages') s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
         context.saveSettingsDebounced();

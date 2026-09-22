@@ -65,6 +65,17 @@
       </label>
       <p class="rvl-muted">Em cena, ele ajuda a representar o jogador. Em POV, ele serve somente para mãos, braços ou outras partes naturalmente visíveis — nunca cria uma segunda pessoa.</p>
 
+      <label class="rvl-checkbox">
+        <input id="rvl_include_continuity" type="checkbox" checked> Manter roupas e cena anterior (continuidade visual)
+      </label>
+      <p class="rvl-muted">Quando ativo, envia a última imagem da cena para manter a roupa e o visual. Se desmarcar ou limpar, a próxima geração usará apenas o avatar original.</p>
+
+      <div class="rvl-continuity-actions">
+        <button id="rvl_clear_continuity" class="menu_button" type="button" title="Esquecer imagem anterior de continuidade">
+          <i class="fa-solid fa-trash-can"></i> Esquecer roupa/cena anterior
+        </button>
+      </div>
+
       <label>Chave da API
         <input id="rvl_api_key" type="password" autocomplete="off" placeholder="Padrão do proxy preenchido automaticamente se vazio">
       </label>
