@@ -22,6 +22,8 @@ const defaults = Object.freeze({
     messages: 8,
     includePlayerReference: true,
     includeContinuity: true,
+    includeChatAttachments: true,
+    selectReferencesBeforeGenerate: true,
 });
 
 const modelChoices = Object.freeze({
@@ -389,41 +391,167 @@ function playerAvatarSource() {
     return '';
 }
 
-async function characterReferences() {
+function openLightbox(dataUrl, title) {
+    if (!dataUrl) return;
+    $('.rvl-lightbox-overlay').remove();
+    const lightbox = $('<div>', { class: 'rvl-lightbox-overlay' });
+    const content = $('<div>', { class: 'rvl-lightbox-content' });
+    content.append($('<button>', { class: 'rvl-lightbox-close', html: '&times;', type: 'button', title: 'Fechar' }));
+    content.append($('<img>', { src: dataUrl, alt: title || 'Visualização' }));
+    if (title) content.append($('<div>', { class: 'rvl-lightbox-title', text: title }));
+    lightbox.append(content);
+
+    lightbox.on('click', function (e) {
+        if ($(e.target).is('.rvl-lightbox-overlay, .rvl-lightbox-close')) {
+            lightbox.fadeOut(100, () => lightbox.remove());
+        }
+    });
+    $('body').append(lightbox);
+}
+
+async function collectChatAttachedImages(context) {
+    const attached = [];
+    const seenUrls = new Set();
+    const chat = context.chat || [];
+
+    function isImageCandidate(url) {
+        if (!url || typeof url !== 'string') return false;
+        if (url.startsWith('data:image/')) return true;
+        const clean = url.split('?')[0].toLowerCase();
+        return clean.endsWith('.png') || clean.endsWith('.jpg') || clean.endsWith('.jpeg')
+            || clean.endsWith('.webp') || clean.endsWith('.gif') || clean.endsWith('.bmp')
+            || clean.endsWith('.avif') || url.includes('/files/') || url.includes('/User%20Files/')
+            || url.includes('/user_files/') || url.includes('/api/files/');
+    }
+
+    // 1. Scan DOM for rendered images in chat (excluding avatars, emojis, expressions, and our own generated images)
+    try {
+        $('#chat .mes').each(function () {
+            const isUser = $(this).attr('is_user') === 'true';
+            $(this).find('img:not(.avatar img):not(.emoji):not(.expression)').each(function () {
+                if ($(this).closest('.rvl-image-container').length) return;
+                const src = $(this).attr('src');
+                if (!src || seenUrls.has(src) || src.includes('data:image/svg+xml') || src.includes('favicon')) return;
+                seenUrls.add(src);
+                attached.push({
+                    src,
+                    isUser,
+                    element: this,
+                    name: isUser ? 'Imagem enviada pelo usuário' : 'Imagem anexada no chat',
+                });
+            });
+        });
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] DOM scan error:`, e);
+    }
+
+    // 2. Scan recent messages in context.chat (up to 30 messages backwards)
+    const recent = chat.slice(-30).reverse();
+    for (const m of recent) {
+        if (!m) continue;
+        const isUser = Boolean(m.is_user);
+        const ourGenUrl = m.extra?.[MODULE_NAME]?.imageUrl;
+        const candidates = [];
+
+        if (m.extra) {
+            if (isImageCandidate(m.extra.image) && m.extra.image !== ourGenUrl) candidates.push(m.extra.image);
+            if (isImageCandidate(m.extra.file) && m.extra.file !== ourGenUrl) candidates.push(m.extra.file);
+            if (Array.isArray(m.extra.files)) {
+                m.extra.files.forEach(f => {
+                    const u = typeof f === 'string' ? f : (f?.url || f?.path);
+                    if (isImageCandidate(u) && u !== ourGenUrl) candidates.push(u);
+                });
+            }
+            if (Array.isArray(m.extra.attachments)) {
+                m.extra.attachments.forEach(a => {
+                    const u = typeof a === 'string' ? a : (a?.url || a?.path);
+                    if (isImageCandidate(u) && u !== ourGenUrl) candidates.push(u);
+                });
+            }
+        }
+
+        if (Array.isArray(m.files)) {
+            m.files.forEach(f => {
+                const u = typeof f === 'string' ? f : (f?.url || f?.path);
+                if (isImageCandidate(u) && u !== ourGenUrl) candidates.push(u);
+            });
+        }
+
+        if (m.mes && typeof m.mes === 'string') {
+            const mdRegex = /!\[.*?\]\((.*?)\)/g;
+            let match;
+            while ((match = mdRegex.exec(m.mes)) !== null) {
+                const u = match[1]?.trim();
+                if (isImageCandidate(u) && u !== ourGenUrl) candidates.push(u);
+            }
+            const htmlRegex = /<img[^>]+src=["']([^"']+)["']/gi;
+            while ((match = htmlRegex.exec(m.mes)) !== null) {
+                const u = match[1]?.trim();
+                if (isImageCandidate(u) && u !== ourGenUrl) candidates.push(u);
+            }
+        }
+
+        for (const rawUrl of candidates) {
+            if (seenUrls.has(rawUrl)) continue;
+            seenUrls.add(rawUrl);
+            attached.push({
+                src: rawUrl,
+                isUser,
+                name: isUser ? 'Imagem enviada pelo usuário' : 'Imagem anexada no chat',
+            });
+        }
+    }
+
+    const loadedRefs = [];
+    for (let i = 0; i < attached.length; i++) {
+        const item = attached[i];
+        let ref = null;
+        if (item.element && item.element.complete && item.element.naturalWidth > 0) {
+            try {
+                const dataUrl = await imageElementToDataUrl(item.element);
+                if (dataUrl) {
+                    const img = dataUrlToImage(dataUrl);
+                    if (img) ref = { ...img, name: `${item.name} #${i + 1}`, role: 'attachment' };
+                }
+            } catch {}
+        }
+        if (!ref && item.src) {
+            ref = await loadImageReference(item.src, `${item.name} #${i + 1}`, 'attachment');
+        }
+        if (ref && ref.dataUrl) {
+            ref.isUserAttachment = item.isUser;
+            loadedRefs.push(ref);
+        }
+    }
+
+    return loadedRefs;
+}
+
+async function collectAllCandidates() {
     const context = SillyTavern.getContext();
+    const s = settings();
+    const candidates = [];
     const allCharacters = context.characters || [];
-    
-    // Resolve active character robustly (by numeric or string ID, or by scanning chat)
+
+    // 1. Resolve active character
     let active = null;
     if (context.characterId !== undefined && context.characterId !== null) {
         active = allCharacters[Number(context.characterId)] || allCharacters[context.characterId];
     }
     if (!active) {
-        // Find by name from chat
         const lastNonUsr = (context.chat || []).slice().reverse().find(m => !m.is_user && m.name);
-        if (lastNonUsr) {
-            active = allCharacters.find(c => c.name === lastNonUsr.name);
-        }
+        if (lastNonUsr) active = allCharacters.find(c => c.name === lastNonUsr.name);
     }
-    if (!active && allCharacters.length === 1) {
-        active = allCharacters[0];
-    }
+    if (!active && allCharacters.length === 1) active = allCharacters[0];
 
-    const activeGroup = context.groupId != null
-        ? (context.groups || []).find(group => group.id === context.groupId)
-        : null;
-
+    const activeGroup = context.groupId != null ? (context.groups || []).find(g => g.id === context.groupId) : null;
     const groupAvatars = new Set(activeGroup?.members || []);
     const charactersToLoad = activeGroup
-        ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
+        ? allCharacters.filter(c => c.avatar && groupAvatars.has(c.avatar)).slice(0, 4)
         : (active ? [active] : []);
 
-    const references = await Promise.all(charactersToLoad.map(async character => {
-        // Pede DIRETAMENTE o caminho do arquivo original em alta resolução (/characters/nome.png)
-        let fullResUrl = '';
-        if (character.avatar) {
-            fullResUrl = `/characters/${encodeURIComponent(character.avatar)}`;
-        }
+    for (const character of charactersToLoad) {
+        let fullResUrl = character.avatar ? `/characters/${encodeURIComponent(character.avatar)}` : '';
         if (!fullResUrl && typeof context.getThumbnailUrl === 'function' && character.avatar) {
             try { fullResUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
         }
@@ -433,49 +561,92 @@ async function characterReferences() {
         }
 
         const ref = await loadImageReference(fullResUrl, character.name || currentCharacterName(), 'character');
-        if (ref) {
-            if (character.description) ref.charDescription = character.description;
+        if (ref && ref.dataUrl) {
+            candidates.push({
+                id: `char_${character.name || 'main'}`,
+                name: character.name || currentCharacterName(),
+                role: 'character',
+                roleLabel: 'Personagem Principal',
+                badgeBg: 'rgba(56, 189, 248, 0.25)',
+                badgeColor: '#38bdf8',
+                hint: 'Rosto, cabelo e traços do card de personagem',
+                dataUrl: ref.dataUrl,
+                charDescription: character.description || '',
+                defaultSelected: true,
+            });
         }
-        return ref;
-    }));
+    }
 
-    const validReferences = references.filter(Boolean);
-
-    // Fallback if no reference found through characters array: directly capture the character avatar from the chat DOM!
-    if (!validReferences.some(r => r.role === 'character')) {
+    // Fallback if no character found
+    if (!candidates.some(c => c.role === 'character')) {
         try {
             const chatCharImg = $('#chat .mes[is_user="false"] .avatar img').last()[0] || $('#chat .mes[is_user="false"] .avatar img').first()[0];
             if (chatCharImg) {
                 const domRef = await loadImageReference(chatCharImg, currentCharacterName(), 'character');
-                if (domRef) validReferences.unshift(domRef);
+                if (domRef && domRef.dataUrl) {
+                    candidates.push({
+                        id: 'char_fallback',
+                        name: currentCharacterName(),
+                        role: 'character',
+                        roleLabel: 'Personagem Principal',
+                        badgeBg: 'rgba(56, 189, 248, 0.25)',
+                        badgeColor: '#38bdf8',
+                        hint: 'Avatar do personagem no chat',
+                        dataUrl: domRef.dataUrl,
+                        defaultSelected: true,
+                    });
+                }
             }
         } catch {}
     }
 
-    if (settings().includePlayerReference) {
-        // Tenta resolver a foto de perfil original do jogador em alta resolução
+    // 2. Chat attached images (uploaded/sent in chat by user or messages)
+    if (s.includeChatAttachments !== false) {
+        const attached = await collectChatAttachedImages(context);
+        attached.forEach((att, idx) => {
+            candidates.push({
+                id: `chat_att_${idx}`,
+                name: att.name || `Foto do Chat #${idx + 1}`,
+                role: 'attachment',
+                roleLabel: att.isUserAttachment ? 'Enviada por Você' : 'Anexo do Chat',
+                badgeBg: 'rgba(74, 222, 128, 0.25)',
+                badgeColor: '#4ade80',
+                hint: 'Foto enviada no chat (roupa, pose ou cenário)',
+                dataUrl: att.dataUrl,
+                defaultSelected: true,
+            });
+        });
+    }
+
+    // 3. Player avatar
+    if (s.includePlayerReference) {
         let playerFullUrl = '';
         const userAvatarId = context.powerUserSettings?.user_avatar || context.user_avatar;
-        if (userAvatarId) {
-            playerFullUrl = `/User%20Avatars/${encodeURIComponent(userAvatarId)}`;
-        }
-        if (!playerFullUrl) {
-            playerFullUrl = playerAvatarSource();
-        }
+        if (userAvatarId) playerFullUrl = `/User%20Avatars/${encodeURIComponent(userAvatarId)}`;
+        if (!playerFullUrl) playerFullUrl = playerAvatarSource();
         const playerRef = await loadImageReference(playerFullUrl, context.name1 || 'the player', 'player');
-        if (playerRef) validReferences.push(playerRef);
+        if (playerRef && playerRef.dataUrl) {
+            candidates.push({
+                id: 'player_avatar',
+                name: context.name1 || 'Você (Jogador)',
+                role: 'player',
+                roleLabel: 'Você / Jogador',
+                badgeBg: 'rgba(168, 85, 247, 0.25)',
+                badgeColor: '#c084fc',
+                hint: 'Avatar do jogador (mãos/corpo em POV ou terceira pessoa)',
+                dataUrl: playerRef.dataUrl,
+                defaultSelected: true,
+            });
+        }
     }
-    // 3. Imagem de continuidade: pega a imagem aprovada com 👍 ou a última imagem gerada no chat (se ativada a continuidade)!
-    if (settings().includeContinuity !== false) {
+
+    // 4. Continuity scene
+    if (s.includeContinuity !== false) {
         const memory = getVisualMemory();
         let continuityUrl = memory.lastApprovedImage?.url || memory.lastGeneratedImage?.url;
-
-        // Se não estiver na memória, busca a imagem mais recente do Roleplay Visual Director no histórico do chat (que não tenha sido excluída)
         if (!continuityUrl) {
             const lastVisualMsg = (context.chat || []).slice().reverse().find(m => m.extra?.[MODULE_NAME]?.imageUrl && !m.extra[MODULE_NAME].excludedFromContinuity);
-            if (lastVisualMsg) {
-                continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
-            }
+            if (lastVisualMsg) continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
         }
 
         if (continuityUrl) {
@@ -488,14 +659,263 @@ async function characterReferences() {
                         reader.onload = () => resolve(dataUrlToImage(reader.result));
                         reader.readAsDataURL(blob);
                     });
-                    if (image) validReferences.push({ ...image, name: 'previous scene image', continuity: true, role: 'continuity' });
+                    if (image?.dataUrl) {
+                        const isApproved = memory.lastApprovedImage?.url === continuityUrl;
+                        candidates.push({
+                            id: 'continuity_img',
+                            name: isApproved ? 'Cena Aprovada (👍)' : 'Última Imagem Gerada',
+                            role: 'continuity',
+                            roleLabel: 'Cena Anterior',
+                            badgeBg: 'rgba(251, 191, 36, 0.25)',
+                            badgeColor: '#fbbf24',
+                            hint: 'Continuidade de roupas e ambiente da cena anterior',
+                            continuity: true,
+                            dataUrl: image.dataUrl,
+                            defaultSelected: true,
+                        });
+                    }
                 }
             } catch {
                 console.warn(`[${MODULE_NAME}] Could not load continuity image.`);
             }
         }
     }
-    return validReferences.slice(0, 5);
+
+    return candidates;
+}
+
+function promptReferenceSelection(candidates, mode) {
+    return new Promise((resolve) => {
+        $('#rvl_ref_modal').remove();
+
+        const modeLabels = {
+            scene: 'Foto da Cena',
+            pov: 'Primeira Pessoa (POV)',
+            look: 'Visual Atual',
+        };
+        const modeTitle = modeLabels[mode] || 'Imagem';
+
+        const modal = $('<div>', { id: 'rvl_ref_modal', class: 'rvl-modal-overlay' });
+        const dialog = $('<div>', { class: 'rvl-modal-dialog' });
+
+        const header = $('<div>', { class: 'rvl-modal-header' });
+        header.append($('<div>', {
+            class: 'rvl-modal-title',
+            html: '<i class="fa-solid fa-palette"></i> <span>Selecionar Referências Visuais</span>'
+        }));
+        const closeBtn = $('<button>', {
+            class: 'rvl-modal-close',
+            type: 'button',
+            html: '&times;',
+            title: 'Fechar'
+        });
+        header.append(closeBtn);
+        dialog.append(header);
+
+        dialog.append($('<div>', {
+            class: 'rvl-modal-subtitle',
+            text: `Marque quais imagens a IA deve usar como referência para esta geração (${modeTitle}):`
+        }));
+
+        const body = $('<div>', { class: 'rvl-modal-body' });
+        const list = $('<div>', { class: 'rvl-ref-list' });
+
+        const items = candidates.map((c, idx) => ({ ...c, uniqueKey: `cand_${idx}` }));
+
+        function renderItem(item) {
+            const card = $('<div>', {
+                class: `rvl-ref-item ${item.defaultSelected ? 'selected' : ''}`,
+                'data-key': item.uniqueKey
+            });
+
+            const checkWrapper = $('<div>', { class: 'rvl-ref-check-wrapper' });
+            const check = $('<input>', {
+                type: 'checkbox',
+                class: 'rvl-ref-check',
+                checked: Boolean(item.defaultSelected)
+            });
+            checkWrapper.append(check);
+            card.append(checkWrapper);
+
+            const thumbWrapper = $('<div>', {
+                class: 'rvl-ref-thumb-wrapper',
+                title: 'Clique para abrir em tela cheia'
+            });
+            thumbWrapper.append($('<img>', { src: item.dataUrl, alt: item.name }));
+            thumbWrapper.append($('<span>', {
+                class: 'rvl-ref-zoom-btn',
+                html: '<i class="fa-solid fa-magnifying-glass-plus"></i>'
+            }));
+            card.append(thumbWrapper);
+
+            const info = $('<div>', { class: 'rvl-ref-info' });
+            const headerRow = $('<div>', { class: 'rvl-ref-header-row' });
+            headerRow.append($('<span>', {
+                class: 'rvl-ref-badge',
+                text: item.roleLabel,
+                css: { background: item.badgeBg || 'rgba(255,255,255,0.15)', color: item.badgeColor || '#fff' }
+            }));
+            headerRow.append($('<span>', { class: 'rvl-ref-name', text: item.name, title: item.name }));
+            info.append(headerRow);
+
+            if (item.hint) {
+                info.append($('<div>', { class: 'rvl-ref-hint', text: item.hint }));
+            }
+            card.append(info);
+
+            thumbWrapper.on('click', function (e) {
+                e.stopPropagation();
+                openLightbox(item.dataUrl, `${item.name} (${item.roleLabel})`);
+            });
+
+            card.on('click', function (e) {
+                if ($(e.target).is('input[type="checkbox"]')) return;
+                const isChecked = !check.prop('checked');
+                check.prop('checked', isChecked);
+                card.toggleClass('selected', isChecked);
+                item.defaultSelected = isChecked;
+                updateCount();
+            });
+
+            check.on('change', function () {
+                const isChecked = this.checked;
+                card.toggleClass('selected', isChecked);
+                item.defaultSelected = isChecked;
+                updateCount();
+            });
+
+            return card;
+        }
+
+        items.forEach(item => list.append(renderItem(item)));
+        body.append(list);
+
+        const addSection = $('<div>', { class: 'rvl-add-ref-section' });
+        const fileInput = $('<input>', {
+            type: 'file',
+            id: 'rvl_modal_upload_file',
+            accept: 'image/*',
+            style: 'display:none;'
+        });
+        const addBtn = $('<button>', {
+            type: 'button',
+            class: 'menu_button rvl-add-ref-btn',
+            html: '<i class="fa-solid fa-file-arrow-up"></i> + Enviar outra foto do seu aparelho como referência'
+        });
+        addBtn.on('click', () => fileInput.click());
+
+        fileInput.on('change', function () {
+            const file = this.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function () {
+                const dataUrl = reader.result;
+                const newItem = {
+                    id: `custom_${Date.now()}`,
+                    uniqueKey: `custom_${Date.now()}`,
+                    name: file.name.slice(0, 24) || 'Foto enviada',
+                    role: 'attachment',
+                    roleLabel: 'Upload Manual',
+                    badgeBg: 'rgba(236, 72, 153, 0.25)',
+                    badgeColor: '#f472b6',
+                    hint: 'Foto enviada manualmente agora como referência para esta cena',
+                    dataUrl,
+                    defaultSelected: true,
+                };
+                items.push(newItem);
+                const el = renderItem(newItem);
+                list.append(el);
+                updateCount();
+                el[0]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            };
+            reader.readAsDataURL(file);
+            this.value = '';
+        });
+
+        addSection.append(fileInput).append(addBtn);
+        body.append(addSection);
+        dialog.append(body);
+
+        const footer = $('<div>', { class: 'rvl-modal-footer' });
+        const prefLabel = $('<label>', { class: 'rvl-checkbox rvl-modal-pref' });
+        const prefCheck = $('<input>', {
+            type: 'checkbox',
+            id: 'rvl_modal_always_ask',
+            checked: settings().selectReferencesBeforeGenerate !== false
+        });
+        prefLabel.append(prefCheck).append($('<span>', { text: 'Sempre exibir esta seleção antes de gerar imagem' }));
+        footer.append(prefLabel);
+
+        const actions = $('<div>', { class: 'rvl-modal-actions' });
+        const cancelBtn = $('<button>', {
+            type: 'button',
+            class: 'menu_button',
+            text: 'Cancelar'
+        });
+        const confirmBtn = $('<button>', {
+            type: 'button',
+            class: 'menu_button menu_button_primary rvl-btn-confirm',
+            html: '<i class="fa-solid fa-wand-magic-sparkles"></i> Gerar Imagem (<span class="rvl-count">0</span>)'
+        });
+
+        actions.append(cancelBtn).append(confirmBtn);
+        footer.append(actions);
+        dialog.append(footer);
+        modal.append(dialog);
+
+        function updateCount() {
+            const count = items.filter(it => it.defaultSelected).length;
+            confirmBtn.find('.rvl-count').text(count);
+        }
+        updateCount();
+
+        function cleanup(result) {
+            const alwaysAsk = prefCheck.prop('checked');
+            settings().selectReferencesBeforeGenerate = alwaysAsk;
+            $('#rvl_select_references').prop('checked', alwaysAsk);
+            SillyTavern.getContext().saveSettingsDebounced?.();
+
+            modal.fadeOut(120, () => {
+                modal.remove();
+                resolve(result);
+            });
+        }
+
+        cancelBtn.on('click', () => cleanup(null));
+        closeBtn.on('click', () => cleanup(null));
+        modal.on('click', function (e) {
+            if ($(e.target).is('.rvl-modal-overlay')) cleanup(null);
+        });
+
+        confirmBtn.on('click', function () {
+            const selected = items.filter(it => it.defaultSelected).map(it => {
+                const parsed = dataUrlToImage(it.dataUrl);
+                return {
+                    ...(parsed || {}),
+                    name: it.name,
+                    role: it.role,
+                    dataUrl: it.dataUrl,
+                    continuity: Boolean(it.continuity),
+                    charDescription: it.charDescription,
+                };
+            });
+            cleanup(selected);
+        });
+
+        $('body').append(modal);
+    });
+}
+
+async function characterReferences() {
+    const candidates = await collectAllCandidates();
+    return candidates.filter(c => c.defaultSelected).slice(0, 5).map(c => ({
+        ...(dataUrlToImage(c.dataUrl) || {}),
+        name: c.name,
+        role: c.role,
+        dataUrl: c.dataUrl,
+        continuity: Boolean(c.continuity),
+        charDescription: c.charDescription,
+    }));
 }
 
 function currentCharacterName() {
@@ -535,17 +955,30 @@ function buildPrompt(mode, references) {
     }[mode];
 
     const hasContinuityImage = references.some(reference => reference.continuity);
+    const hasAttachment = references.some(reference => reference.role === 'attachment');
     const referenceRoles = references.length
-        ? references.map((reference, index) => reference.continuity
-            ? `Image ${index + 1}: THE PREVIOUS GENERATED SCENE (CONTINUITY REFERENCE). ${charName} was wearing specific clothes, outfit, and accessories in this image. MANDATORY CLOTHING CONTINUITY: You MUST keep ${charName} wearing the EXACT SAME outfit, clothes, and colors as shown in this image, UNLESS the recent roleplay text explicitly states that ${charName} changed clothes, undressed, or put on a new outfit.`
-            : reference.role === 'player'
-                ? `Image ${index + 1}: ${reference.name}'s player avatar. Use it as the authoritative identity only when the player is visibly present in a third-person scene or as natural foreground body parts in POV.`
-                : `Image ${index + 1}: PRIMARY CHARACTER REFERENCE for ${reference.name}. You MUST faithfully reproduce this character's exact face, facial features, hair style, hair color, eye color, and overall appearance from this image. Do NOT invent a random character.`).join('\n')
+        ? references.map((reference, index) => {
+            if (reference.continuity) {
+                return `Image ${index + 1}: THE PREVIOUS GENERATED SCENE (CONTINUITY REFERENCE). ${charName} was wearing specific clothes, outfit, and accessories in this image. MANDATORY CLOTHING CONTINUITY: You MUST keep ${charName} wearing the EXACT SAME outfit, clothes, and colors as shown in this image, UNLESS the recent roleplay text explicitly states that ${charName} changed clothes, undressed, or put on a new outfit.`;
+            }
+            if (reference.role === 'attachment') {
+                return `Image ${index + 1}: USER PROVIDED REFERENCE / CHAT ATTACHMENT (${reference.name}). The user or chat specifically provided this image as direct visual guidance for this scene (outfit, style, pose, or setting). Faithfully incorporate the clothing, outfit style, pose, or visual details shown in this image for ${charName}.`;
+            }
+            if (reference.role === 'player') {
+                return `Image ${index + 1}: ${reference.name}'s player avatar. Use it as the authoritative identity only when the player is visibly present in a third-person scene or as natural foreground body parts in POV.`;
+            }
+            return `Image ${index + 1}: PRIMARY CHARACTER REFERENCE for ${reference.name}. You MUST faithfully reproduce this character's exact face, facial features, hair style, hair color, eye color, and overall appearance from this image. Do NOT invent a random character.`;
+        }).join('\n')
         : 'There are no visual references for this request.';
 
     const continuityClothingRule = hasContinuityImage
         ? `\nOUTFIT & CLOTHING CONTINUITY RULE (STRICT):
 Look at the attached previous scene image. Unless the recent conversation explicitly mentions changing clothes, taking off clothes, or wearing something new, ${charName} MUST wear the exact same clothing, colors, and accessories from the previous image.`
+        : '';
+
+    const attachmentRule = hasAttachment
+        ? `\nUSER ATTACHMENT GUIDANCE (STRICT):
+The user has provided specific reference image(s). Carefully observe the outfit, clothing style, colors, pose, and visual context from the attached user image(s) and faithfully reproduce those clothing/pose elements for ${charName} in the generated image.\n`
         : '';
 
     return `CRITICAL INSTRUCTION:
@@ -558,6 +991,7 @@ MANDATORY CHARACTER LOCK:
 - The character ${charName} in the generated image MUST match the visual identity, face structure, eye color, and hair style from the attached character reference image.
 - Do NOT replace ${charName} with a generic or random person. Maintain complete fidelity to the reference image.
 ${continuityClothingRule}
+${attachmentRule}
 
 CAST COMPOSITION:
 Depict exactly ${charName} and the interaction with the player. In POV mode, only show ${charName} in front of the lens.
@@ -1102,10 +1536,30 @@ async function run(mode) {
     }
 
     try {
-        notice('Preparando contexto e referências do personagem…');
-        const references = await characterReferences();
+        notice('Buscando referências visuais disponíveis…');
+        const candidates = await collectAllCandidates();
+
+        let references = [];
+        if (s.selectReferencesBeforeGenerate !== false && candidates.length > 0) {
+            const selected = await promptReferenceSelection(candidates, mode);
+            if (!selected) {
+                notice('Geração de imagem cancelada.');
+                return;
+            }
+            references = selected;
+        } else {
+            references = candidates.filter(c => c.defaultSelected).slice(0, 5).map(c => ({
+                ...(dataUrlToImage(c.dataUrl) || {}),
+                name: c.name,
+                role: c.role,
+                dataUrl: c.dataUrl,
+                continuity: Boolean(c.continuity),
+                charDescription: c.charDescription,
+            }));
+        }
+
         const charRefFound = references.some(r => r.role === 'character');
-        console.info(`[${MODULE_NAME}] References carregadas:`, references.length, '| Personagem encontrado:', charRefFound);
+        console.info(`[${MODULE_NAME}] References enviadas para IA:`, references.length, '| Personagem encontrado:', charRefFound);
         
         // Atualiza painel de depuração para mostrar ao usuário as fotos exatas enviadas
         if ($('#rvl_debug_thumbs').length) {
@@ -1180,6 +1634,8 @@ function syncUi() {
     $('#rvl_messages').val(s.messages);
     $('#rvl_player_reference').prop('checked', Boolean(s.includePlayerReference));
     $('#rvl_include_continuity').prop('checked', s.includeContinuity !== false);
+    $('#rvl_include_attachments').prop('checked', s.includeChatAttachments !== false);
+    $('#rvl_select_references').prop('checked', s.selectReferencesBeforeGenerate !== false);
     $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
     $('#rvl_chat_model').val(s.proxyChatModel || 'gemini-3.8-flash-high');
 }
@@ -1234,7 +1690,7 @@ async function init() {
         if (!this.checked) forgetPersistentKey($('#rvl_provider').val());
     });
 
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_chat_model').on('change', function () {
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_include_attachments, #rvl_select_references, #rvl_chat_model').on('change', function () {
         const s = settings();
         const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
@@ -1242,6 +1698,8 @@ async function init() {
         else if (this.id === 'rvl_quality') s.quality = this.value;
         else if (this.id === 'rvl_player_reference') s.includePlayerReference = this.checked;
         else if (this.id === 'rvl_include_continuity') s.includeContinuity = this.checked;
+        else if (this.id === 'rvl_include_attachments') s.includeChatAttachments = this.checked;
+        else if (this.id === 'rvl_select_references') s.selectReferencesBeforeGenerate = this.checked;
         else if (this.id === 'rvl_chat_model') s.proxyChatModel = this.value;
         else if (this.id === 'rvl_messages') s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
         context.saveSettingsDebounced();
