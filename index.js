@@ -25,8 +25,8 @@ const defaults = Object.freeze({
 
 const modelChoices = Object.freeze({
     proxy: [
+        ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente (com Referência Direta)'],
         ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)'],
-        ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente (com Análise de Visão)'],
         ['google1/gemini-3.1-flash-image', 'Google Conta 1 — Gemini 3.1 Flash Image'],
         ['google2/gemini-3.1-flash-image', 'Google Conta 2 — Gemini 3.1 Flash Image'],
         ['google3/gemini-3.1-flash-image', 'Google Conta 3 — Gemini 3.1 Flash Image'],
@@ -153,12 +153,13 @@ async function refreshProxyCatalog() {
         const targetList = imageModels.length ? imageModels : allModels;
         proxyCatalog = targetList.map(m => {
             let label = m.id;
-            if (m.id === 'gemini-3.1-flash-image') label = 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)';
-            else if (m.id.startsWith('google') && m.id.includes('image')) {
+            if (m.id === 'gpt-image-2.5') {
+                label = 'GPT Image 2.5 — OpenAI Mais Potente (com Referência Direta)';
+            } else if (m.id === 'gemini-3.1-flash-image') {
+                label = 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)';
+            } else if (m.id.startsWith('google') && m.id.includes('image')) {
                 const acct = m.id.split('/')[0];
                 label = `${acct.toUpperCase()} — ${m.id}`;
-            } else if (m.id === 'gpt-image-2.5') {
-                label = 'GPT Image 2.5 — OpenAI Mais Potente (com Análise de Visão)';
             }
             return { id: m.id, name: label };
         }).sort((a, b) => a.id.localeCompare(b.id));
@@ -261,6 +262,18 @@ async function dislikeImage(messageId, mode) {
 function dataUrlToImage(dataUrl) {
     const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
     return match ? { mimeType: match[1], data: match[2], dataUrl } : null;
+}
+
+function dataUrlToBlob(dataUrl) {
+    const arr = dataUrl.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
 }
 
 async function imageElementToDataUrl(imgElement) {
@@ -410,7 +423,6 @@ async function characterReferences() {
 
         const ref = await loadImageReference(avatarUrl, character.name || currentCharacterName(), 'character');
         if (ref) {
-            // attach character description/visual traits if available
             if (character.description) ref.charDescription = character.description;
         }
         return ref;
@@ -465,7 +477,6 @@ function buildPrompt(mode, references) {
     const s = settings();
     const charName = currentCharacterName();
 
-    // Extract character visual description if available
     let charVisualTraits = '';
     const charRef = references.find(r => r.role === 'character');
     if (charRef?.charDescription) {
@@ -514,53 +525,10 @@ Current roleplay context:
 ${history || 'No chat messages are available.'}`;
 }
 
-/**
- * Uses GPT-5.5 (Vision) to analyze the character reference image and extract exact visual traits
- * to inject into GPT Image prompt.
- */
-async function analyzeCharacterVisualsWithGpt(url, key, charRef, charName) {
-    if (!charRef?.dataUrl) return '';
-    try {
-        const res = await fetch(`${url}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${key}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model: 'gpt-5.5',
-                messages: [{
-                    role: 'user',
-                    content: [
-                        {
-                            type: 'text',
-                            text: `Describe the visual appearance of the character ${charName} in this reference image in 3-4 concise sentences for an image generation prompt. Include: gender, approximate age, art style (anime, realistic, 3D), hair color and hairstyle, eye color, facial features, skin tone, and notable clothing or accessories. Output ONLY the visual description.`
-                        },
-                        {
-                            type: 'image_url',
-                            image_url: { url: charRef.dataUrl }
-                        }
-                    ]
-                }],
-                max_tokens: 250,
-            }),
-        });
-        const json = await res.json();
-        const description = json.choices?.[0]?.message?.content?.trim();
-        if (description) {
-            console.info(`[${MODULE_NAME}] Análise visual de ${charName} via GPT-5.5:`, description);
-            return description;
-        }
-    } catch (err) {
-        console.warn(`[${MODULE_NAME}] Não foi possível analisar imagem via GPT-5.5:`, err);
-    }
-    return '';
-}
-
 async function generateProxy(key, prompt, references) {
     const s = settings();
     const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
-    const model = s.proxyModel || 'gemini-3.1-flash-image';
+    const model = s.proxyModel || 'gpt-image-2.5';
     const isGemini = model.includes('gemini') || model.startsWith('google');
 
     if (isGemini) {
@@ -605,50 +573,69 @@ async function generateProxy(key, prompt, references) {
         }
         return { dataUrl: imageUrl };
     } else {
-        // Modelos GPT (como gpt-image-2.5): são chamados via /images/generations (que recebe texto).
-        // Se houver uma referência visual do personagem, usamos GPT-5.5 com Visão para ler a foto
-        // do avatar e transcrever o visual exato no prompt do gpt-image-2.5!
-        const charRef = references.find(r => r.role === 'character');
-        const charName = currentCharacterName();
-        let enrichedPrompt = prompt;
-
-        if (charRef?.dataUrl) {
-            notice('Analisando o avatar com GPT-5.5 Visão para fidelidade visual…');
-            const visualDescription = await analyzeCharacterVisualsWithGpt(url, key, charRef, charName);
-            if (visualDescription) {
-                enrichedPrompt = `EXACT CHARACTER APPEARANCE (MANDATORY):\n${visualDescription}\n\nSCENE PROMPT:\n${prompt}`;
-            }
-        }
-
+        // Modelos GPT (gpt-image-2.5): Suporta envio direto da imagem como multipart/form-data via /images/edits!
         const [width, height] = aspectSize(s.aspectRatio);
         const rawSize = `${width}x${height}`;
         const allowedSizes = new Set(['1024x1024', '1792x1024', '1024x1792', '1024x768', '768x1024']);
         const size = allowedSizes.has(rawSize) ? rawSize : '1024x1024';
 
-        const response = await fetch(`${url}/images/generations`, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${key}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model,
-                prompt: enrichedPrompt,
-                size,
-            }),
-        });
-        const json = await response.json();
-        if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação de imagem GPT.');
+        const validImageRefs = references.filter(r => r.dataUrl);
 
-        const item = json.data?.[0];
-        if (!item) throw new Error('O Proxy não retornou dados de imagem do modelo GPT.');
-        if (item.b64_json) {
-            return { dataUrl: `data:image/png;base64,${item.b64_json}` };
+        if (validImageRefs.length > 0) {
+            // Envia DIRETAMENTE a imagem do avatar como arquivo binário no multipart/form-data (/images/edits)
+            const formData = new FormData();
+            formData.append('model', model);
+            formData.append('prompt', prompt);
+            formData.append('size', size);
+
+            for (let i = 0; i < validImageRefs.length; i++) {
+                const ref = validImageRefs[i];
+                const blob = dataUrlToBlob(ref.dataUrl);
+                const fieldName = 'image';
+                const fileName = `${ref.role || 'ref'}_${i}.png`;
+                formData.append(fieldName, blob, fileName);
+            }
+
+            const response = await fetch(`${url}/images/edits`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${key}`,
+                },
+                body: formData,
+            });
+
+            const json = await response.json();
+            if (response.ok && json.data?.[0]) {
+                const item = json.data[0];
+                if (item.b64_json) return { dataUrl: `data:image/png;base64,${item.b64_json}` };
+                if (item.url) return { dataUrl: await novitaImageFromUrl(item.url) };
+            } else {
+                console.warn(`[${MODULE_NAME}] /images/edits com form-data falhou:`, json);
+                throw new Error(json.error?.message || json.message || 'O modelo GPT recusou a imagem enviada.');
+            }
+        } else {
+            // Sem imagem de referência disponível: gera direto via text-to-image
+            const response = await fetch(`${url}/images/generations`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${key}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model,
+                    prompt,
+                    size,
+                }),
+            });
+            const json = await response.json();
+            if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação de imagem GPT.');
+
+            const item = json.data?.[0];
+            if (!item) throw new Error('O Proxy não retornou dados de imagem do modelo GPT.');
+            if (item.b64_json) return { dataUrl: `data:image/png;base64,${item.b64_json}` };
+            if (item.url) return { dataUrl: await novitaImageFromUrl(item.url) };
+            throw new Error('Nenhuma imagem legível na resposta do GPT.');
         }
-        if (item.url) {
-            return { dataUrl: await novitaImageFromUrl(item.url) };
-        }
-        throw new Error('Nenhuma imagem legível na resposta do GPT.');
     }
 }
 
@@ -991,7 +978,7 @@ async function run(mode) {
         notice('Enviando imagem para o chat…');
         const published = await publishToChat(result, mode);
         attachFeedbackControls(published.messageId, published.mode);
-        const refStatus = charRefFound ? 'com referência do personagem' : '(sem referência)';
+        const refStatus = charRefFound ? 'com referência direta da foto' : '(sem referência)';
         notice(result.cost != null ? `Imagem criada ${refStatus}. Custo: US$ ${Number(result.cost).toFixed(4)}.` : `Imagem criada ${refStatus}.`);
     } catch (error) {
         console.error(`[${MODULE_NAME}]`, error);
