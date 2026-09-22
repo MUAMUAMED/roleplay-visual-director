@@ -1,46 +1,79 @@
 # Roleplay Visual Director
 
-Extensão de imagens para SillyTavern que transforma o contexto recente do roleplay em uma cena, um POV do jogador ou uma ficha visual do personagem com as roupas atuais.
+Extensão de imagens e inteligência artificial para SillyTavern que transforma o contexto recente do roleplay em uma cena cinematográfica, um POV do jogador ou uma ficha visual do personagem com as roupas atuais.
 
-## Recursos
+Agora com suporte direto ao **Nosso Proxy (CLI Proxy API)**, permitindo usar todo o pool de **7 contas do Google** (sem limite de taxa) e o modelo mais potente da OpenAI (**GPT Image 2.5**), além de permitir **conectar o chat de conversa do SillyTavern ao proxy** com apenas um clique!
+
+---
+
+## 🚀 Novos Recursos
+
+- **Provedor Nosso Proxy (Google & GPT):**
+  - **Google Gemini Multimodal (Pool de 7 Contas):** Gera imagens a partir das referências do avatar e do chat com balanceamento de carga automático (`gemini-3.1-flash-image`), ou direcionando para qualquer uma das 7 contas (`google1` até `google7`).
+  - **GPT Mais Potente (`gpt-image-2.5`):** Gera imagens diretamente via modelos de ponta da OpenAI (`gpt-image-2.5`, `codex/gpt-image-2.5`, `gpt-image-2`).
+  - **Detecção automática de endpoint:** Alterna entre URL pública (`https://antigravity21.zeabur.app/v1`) e rede interna Zeabur (`http://cliproxyapi-musess.zeabur.internal:8317/v1`).
+  - **Chave pré-configurada:** Chave `sk-antigravity21-secure-key` pronta para uso.
+
+- **Conectar Provedor de Chat no SillyTavern:**
+  - Painel integrado para configurar o SillyTavern para conversar usando o proxy.
+  - 1 clique em **"Ativar Chat no SillyTavern"** para preencher endpoint, autenticação e conectar.
+  - Modelos recomendados para RP disponíveis diretamente no seletor:
+    - `gemini-3.8-flash-high` (Pool das 7 contas Google — respostas instantâneas)
+    - `claude-sonnet-4-6` (O melhor para escrita e profundidade de roleplay)
+    - `claude-opus-4-6-thinking` (Raciocínio complexo)
+    - `gpt-5.5` / `gpt-6-astra` (Modelos topo de linha GPT)
+    - Contas Google dedicadas (`google1` a `google7`)
+
+---
+
+## Recursos Principais
 
 - **Criar cena**: enquadramento cinematográfico em terceira pessoa.
 - **Criar POV do jogador**: o momento visto pelos olhos do jogador; a interação é dirigida diretamente à lente, sem criar outro corpo para representar quem está vendo.
 - **Visual e roupas**: mostra o personagem ativo de corpo inteiro, priorizando roupas, acessórios e estado atual descritos no chat.
 - Usa o avatar do personagem ativo como imagem de referência, quando disponível.
-- Pode incluir o avatar do jogador como referência: ele aparece em cenas quando apropriado; em POV, só orienta mãos, braços ou outras partes que realmente poderiam entrar no enquadramento.
-- Conectores diretos para OpenRouter e Google Gemini.
-- Integração Novita AI com uma lista fixa e estável de modelos nativos de geração e edição, adequada para uso em celular.
-- Catálogo dinâmico do OpenRouter: carrega todos os modelos de imagem disponíveis pela API (atualmente 43), incluindo os adicionados depois da instalação.
-- Publica automaticamente cada imagem gerada no chat como uma mensagem visual do sistema.
-- Exibe botões **Cena**, **POV** e **Visual** diretamente acima da caixa de mensagem do chat.
-- Cada imagem no chat tem **👍** para aprová-la como referência de continuidade e **👎** para apagar essa imagem do chat e refazê-la. A próxima imagem envia o avatar e a última imagem aprovada como referências.
+- Pode incluir o avatar do jogador como referência: ele aparece em cenas quando apropriado; em POV, só orienta mãos, braços ou outras partes visíveis.
+- Botões **Cena**, **POV** e **Visual** diretamente acima da barra de mensagem do chat.
+- Cada imagem gerada no chat possui **👍** para aprová-la como continuidade e **👎** para apagá-la e refazê-la.
 
-## Instalação
+---
 
-No SillyTavern, abra **Extensions → Install Extension**, cole a URL deste repositório e confirme. Depois, abra o painel **Roleplay Visual Director** em Extensions.
+## Instalação no SillyTavern
 
-## Configuração
+1. No SillyTavern, abra **Extensions** (ícone de blocos/extensões) → **Install Extension**.
+2. Cole a URL do repositório:
+   ```text
+   https://github.com/MUAMUAMED/roleplay-visual-director
+   ```
+3. Confirme a instalação.
+4. Abra o painel **Roleplay Visual Director** na aba de Extensões.
 
-1. Escolha o provedor e o modelo pelo seletor do painel. Para OpenRouter, clique em **Atualizar todos os modelos** após informar a chave para carregar o catálogo completo. A Novita usa uma lista fixa de modelos compatíveis, sem carregamento em segundo plano.
-2. Cole a chave da API no campo correspondente.
-3. Escolha a proporção e a quantidade de mensagens usadas como contexto.
-4. Clique em um dos três botões de geração.
+---
 
-Por padrão, as chaves ficam apenas durante a sessão. A opção **Lembrar esta chave neste navegador** salva a chave no armazenamento local do navegador para não precisar colá-la novamente. Ela nunca é gravada no repositório, mas não deve ser usada em uma instalação compartilhada, pois extensões da mesma instalação podem acessá-la.
+## Configuração Rápida
 
-### Modelos sugeridos
+### 1. Para Geração de Imagens
+- Em **Provedor**, escolha **Nosso Proxy (Google & GPT)**.
+- Escolha o modelo:
+  - Para fidelidade a fotos/referências usando as contas Google: `Google Gemini — Pool Automático (7 Contas)` ou uma conta específica.
+  - Para o gerador mais potente da OpenAI: `GPT Image 2.5 — OpenAI Mais Potente`.
+- Clique em **Cena**, **POV** ou **Visual** no chat!
 
-- OpenRouter: um modelo com saída de imagem e entrada de imagem, como `google/gemini-2.5-flash-image`.
-- Google: `gemini-3.1-flash-image`.
-- Novita AI: escolha um dos modelos nativos fixos exibidos no seletor (Z Image, FLUX 2, Seedream 4.0, Qwen-Image ou FLUX.1 Kontext). Quando o modelo aceita edição, a extensão envia os avatares e a última imagem aprovada com **👍** como referências.
-- A Novita limita o prompt a 1.024 caracteres; a extensão reduz automaticamente o contexto somente nesse provedor, preservando as instruções visuais e o trecho mais recente do RP.
+### 2. Para Usar no Chat de Conversa do SillyTavern
+1. No painel da extensão, role até **"Usar Nosso Proxy como Provedor de Chat"**.
+2. Escolha o modelo de conversa desejado (ex: `gemini-3.8-flash-high` ou `claude-sonnet-4-6`).
+3. Clique em **Ativar Chat no SillyTavern**.
+4. Pronto! O SillyTavern será conectado automaticamente ao proxy.
 
-O OpenRouter informa, pela própria API, quais modelos aceitam imagens de referência. Caso o modelo escolhido não aceite referência, ele poderá gerar somente com o texto do contexto.
+#### Configuração Manual do Chat (se preferir):
+1. Clique no ícone de tomada (🔌 **API Connections**) no topo do SillyTavern.
+2. Em **API**, selecione **Chat Completion**.
+3. Em **Chat Completion Source**, selecione **Custom (OpenAI-compatible)**.
+4. Em **Custom Endpoint (Base URL)**: `https://antigravity21.zeabur.app/v1`
+5. Em **Custom API Key**: `sk-antigravity21-secure-key`
+6. Clique em **Connect** e escolha o modelo desejado.
 
-## Privacidade e segurança
-
-Esta é uma extensão de navegador. Não cole chaves que você não aceite usar localmente nesta instalação. Não há servidor próprio, telemetria, upload adicional ou armazenamento de chaves.
+---
 
 ## Licença
 

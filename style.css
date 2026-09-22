@@ -1,4 +1,5 @@
 .roleplay-visual-director .rvl-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.roleplay-visual-director .rvl-col-full { grid-column: 1 / -1; }
 .roleplay-visual-director label { display:flex; flex-direction:column; gap:4px; margin:7px 0; }
 .roleplay-visual-director .rvl-actions { display:flex; flex-wrap:wrap; gap:7px; margin:10px 0; }
 .roleplay-visual-director .rvl-muted { font-size:.9em; opacity:.75; }
@@ -6,9 +7,34 @@
 .roleplay-visual-director .rvl-result img { display:block; width:100%; max-height:480px; object-fit:contain; margin-top:10px; border-radius:6px; }
 .roleplay-visual-director .rvl-result a { display:inline-block; margin-top:5px; }
 .roleplay-visual-director .rvl-checkbox { flex-direction:row; align-items:center; gap:8px; }
+
+.roleplay-visual-director .rvl-input-with-action { display:flex; gap:6px; }
+.roleplay-visual-director .rvl-input-with-action input { flex:1; }
+.roleplay-visual-director .rvl-input-with-action button { margin:0; white-space:nowrap; }
+
+.roleplay-visual-director .rvl-divider { height:1px; background:rgba(255,255,255,0.12); margin:16px 0; }
+.roleplay-visual-director .rvl-chat-box { background:rgba(0,0,0,0.22); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:12px; margin-top:10px; }
+.roleplay-visual-director .rvl-chat-header { display:flex; align-items:center; gap:8px; font-size:1.05em; color:var(--SmartThemeQuoteColor, #7cd1f9); margin-bottom:4px; }
+.roleplay-visual-director .rvl-connect-btn { background:linear-gradient(135deg, #2563eb, #1d4ed8); color:#fff; font-weight:bold; height:100%; min-height:38px; }
+.roleplay-visual-director .rvl-connect-btn:hover { background:linear-gradient(135deg, #1d4ed8, #1e40af); }
+.roleplay-visual-director .rvl-chat-status { min-height:1.4em; margin:8px 0; font-weight:500; }
+.roleplay-visual-director .rvl-chat-status.rvl-success { color:#4ade80; }
+.roleplay-visual-director .rvl-chat-status.rvl-error { color:#f87171; }
+
+.roleplay-visual-director .rvl-manual-details { margin-top:10px; font-size:.9em; }
+.roleplay-visual-director .rvl-manual-details summary { cursor:pointer; opacity:.85; padding:4px 0; }
+.roleplay-visual-director .rvl-manual-box { background:rgba(0,0,0,0.3); border-radius:6px; padding:10px 14px; margin-top:6px; }
+.roleplay-visual-director .rvl-manual-box ol { margin:0; padding-left:18px; }
+.roleplay-visual-director .rvl-manual-box li { margin-bottom:4px; }
+.roleplay-visual-director .rvl-code { background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px; font-family:monospace; user-select:all; }
+
 .rvl-chat-actions { display:flex; gap:6px; padding:6px 8px; justify-content:center; flex-wrap:wrap; }
 .rvl-chat-actions .menu_button { margin:0; font-size:.9em; }
 .rvl-feedback { display:flex; gap:6px; margin:8px 0 0; }
 .rvl-feedback .menu_button { margin:0; min-width:36px; }
 .rvl-feedback .rvl-approved { color:#6acb7b; border-color:#6acb7b; }
-@media (max-width:600px) { .rvl-chat-actions .menu_button { flex:1 1 30%; font-size:.78em; padding:6px 3px; } }
+@media (max-width:600px) {
+  .rvl-chat-actions .menu_button { flex:1 1 30%; font-size:.78em; padding:6px 3px; }
+  .roleplay-visual-director .rvl-grid { grid-template-columns:1fr; }
+  .roleplay-visual-director .rvl-input-with-action { flex-direction:column; }
+}

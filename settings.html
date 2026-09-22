@@ -5,26 +5,136 @@
     </div>
     <div class="inline-drawer-content">
       <p class="rvl-muted">Gere imagens a partir da conversa e da referência do personagem ativo.</p>
+
       <div class="rvl-grid">
-        <label>Provedor<select id="rvl_provider"><option value="openrouter">OpenRouter</option><option value="google">Google Gemini</option><option value="novita">Novita AI</option></select></label>
-        <label>Modelo<select id="rvl_model"></select></label>
-        <label id="rvl_catalog_tools">Catálogo OpenRouter<button id="rvl_refresh_models" class="menu_button" type="button"><i class="fa-solid fa-rotate"></i> Atualizar todos os modelos</button></label>
-        <label>Proporção<select id="rvl_aspect"><option>16:9</option><option>9:16</option><option selected>1:1</option><option>4:3</option><option>3:4</option></select></label>
-        <label>Qualidade<select id="rvl_quality"><option value="auto">Auto</option><option value="low">Baixa</option><option value="medium">Média</option><option value="high">Alta</option></select></label>
-        <label>Mensagens no contexto<input id="rvl_messages" type="number" min="1" max="30"></label>
+        <label>Provedor
+          <select id="rvl_provider">
+            <option value="proxy" selected>Nosso Proxy (Google &amp; GPT)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="google">Google Gemini (Direto)</option>
+            <option value="novita">Novita AI</option>
+          </select>
+        </label>
+        <label>Modelo
+          <select id="rvl_model"></select>
+        </label>
+
+        <div id="rvl_proxy_url_wrapper" class="rvl-col-full">
+          <label>URL do Proxy
+            <div class="rvl-input-with-action">
+              <input id="rvl_proxy_url" type="text" placeholder="https://antigravity21.zeabur.app/v1" autocomplete="off">
+              <button id="rvl_toggle_proxy_url" class="menu_button" type="button" title="Alternar entre URL pública e interna">
+                <i class="fa-solid fa-network-wired"></i> Alternar interna/pública
+              </button>
+            </div>
+          </label>
+        </div>
+
+        <label id="rvl_catalog_tools">Catálogo do Provedor
+          <button id="rvl_refresh_models" class="menu_button" type="button">
+            <i class="fa-solid fa-rotate"></i> Atualizar modelos
+          </button>
+        </label>
+
+        <label>Proporção
+          <select id="rvl_aspect">
+            <option>16:9</option>
+            <option>9:16</option>
+            <option selected>1:1</option>
+            <option>4:3</option>
+            <option>3:4</option>
+          </select>
+        </label>
+
+        <label>Qualidade
+          <select id="rvl_quality">
+            <option value="auto">Auto</option>
+            <option value="low">Baixa</option>
+            <option value="medium">Média</option>
+            <option value="high">Alta</option>
+          </select>
+        </label>
+
+        <label>Mensagens no contexto
+          <input id="rvl_messages" type="number" min="1" max="30">
+        </label>
       </div>
-      <label class="rvl-checkbox"><input id="rvl_player_reference" type="checkbox"> Usar o avatar do jogador como referência visual</label>
+
+      <label class="rvl-checkbox">
+        <input id="rvl_player_reference" type="checkbox"> Usar o avatar do jogador como referência visual
+      </label>
       <p class="rvl-muted">Em cena, ele ajuda a representar o jogador. Em POV, ele serve somente para mãos, braços ou outras partes naturalmente visíveis — nunca cria uma segunda pessoa.</p>
-      <label>Chave da API (somente nesta sessão)<input id="rvl_api_key" type="password" autocomplete="off" placeholder="Cole a chave do provedor selecionado"></label>
-      <label class="rvl-checkbox"><input id="rvl_remember_key" type="checkbox"> Lembrar esta chave neste navegador</label>
-      <p class="rvl-muted">Ao marcar, a chave fica no armazenamento local deste navegador. Não é enviada ao GitHub, mas outras extensões da mesma instalação podem acessá-la.</p>
+
+      <label>Chave da API
+        <input id="rvl_api_key" type="password" autocomplete="off" placeholder="Padrão do proxy preenchido automaticamente se vazio">
+      </label>
+
+      <label class="rvl-checkbox">
+        <input id="rvl_remember_key" type="checkbox"> Lembrar configurações neste navegador
+      </label>
+      <p class="rvl-muted">Ao marcar, os dados ficam no armazenamento local deste navegador.</p>
+
       <div class="rvl-actions">
         <button id="rvl_scene" class="menu_button"><i class="fa-solid fa-image"></i> Criar cena</button>
         <button id="rvl_pov" class="menu_button"><i class="fa-solid fa-eye"></i> Criar POV do jogador</button>
         <button id="rvl_look" class="menu_button"><i class="fa-solid fa-shirt"></i> Visual e roupas</button>
       </div>
+
       <div id="rvl_status" aria-live="polite"></div>
       <div id="rvl_result" class="rvl-result"></div>
+
+      <!-- SEÇÃO DO PROVEDOR DE CONVERSA (CHAT) -->
+      <div class="rvl-divider"></div>
+      <div class="rvl-chat-box">
+        <div class="rvl-chat-header">
+          <i class="fa-solid fa-comments"></i>
+          <b>Usar Nosso Proxy como Provedor de Chat</b>
+        </div>
+        <p class="rvl-muted">Conecte o SillyTavern ao proxy para conversar usando as 7 contas Google (sem limites de taxa) ou os modelos mais inteligentes (Claude e GPT).</p>
+
+        <div class="rvl-grid">
+          <label>Modelo para Conversa
+            <select id="rvl_chat_model">
+              <option value="gemini-3.8-flash-high" selected>Google Gemini 3.8 Flash (Pool 7 Contas — Recomendado)</option>
+              <option value="claude-sonnet-4-6">Claude 4.6 Sonnet (Ideal para Roleplay Detalhado)</option>
+              <option value="claude-opus-4-6-thinking">Claude 4.6 Opus Thinking (Raciocínio Profundo)</option>
+              <option value="gpt-5.5">GPT 5.5 (OpenAI Mais Potente)</option>
+              <option value="codex/gpt-6-astra">GPT 6 Astra</option>
+              <option value="gemini-pro-agent">Gemini Pro Agent</option>
+              <option value="google1/gemini-3.8-flash-high">Google Conta 1 — Gemini 3.8 Flash</option>
+              <option value="google2/gemini-3.8-flash-high">Google Conta 2 — Gemini 3.8 Flash</option>
+              <option value="google3/gemini-3.8-flash-high">Google Conta 3 — Gemini 3.8 Flash</option>
+              <option value="google4/gemini-3.8-flash-high">Google Conta 4 — Gemini 3.8 Flash</option>
+              <option value="google5/gemini-3.8-flash-high">Google Conta 5 — Gemini 3.8 Flash</option>
+              <option value="google6/gemini-3.8-flash-high">Google Conta 6 — Gemini 3.8 Flash</option>
+              <option value="google7/gemini-3.8-flash-high">Google Conta 7 — Gemini 3.8 Flash</option>
+            </select>
+          </label>
+
+          <label>Ação
+            <button id="rvl_connect_chat_btn" class="menu_button rvl-connect-btn" type="button">
+              <i class="fa-solid fa-plug-circle-bolt"></i> Ativar Chat no SillyTavern
+            </button>
+          </label>
+        </div>
+
+        <div id="rvl_chat_status" class="rvl-chat-status"></div>
+
+        <details class="rvl-manual-details">
+          <summary><i class="fa-solid fa-circle-question"></i> Configuração manual no SillyTavern (passo a passo)</summary>
+          <div class="rvl-manual-box">
+            <ol>
+              <li>No SillyTavern, clique no ícone de <b>Conexões de API</b> (a tomada 🔌 no topo).</li>
+              <li>Em <b>API</b>, escolha <b>Chat Completion</b>.</li>
+              <li>Em <b>Chat Completion Source</b>, selecione <b>Custom (OpenAI-compatible)</b>.</li>
+              <li>Em <b>Custom Endpoint (Base URL)</b>, use: <code class="rvl-code">https://antigravity21.zeabur.app/v1</code></li>
+              <li>Em <b>Custom API Key</b>, use: <code class="rvl-code">sk-antigravity21-secure-key</code></li>
+              <li>Clique em <b>Connect</b> e escolha o modelo desejado (ex: <code>gemini-3.8-flash-high</code> ou <code>gpt-5.5</code>).</li>
+            </ol>
+          </div>
+        </details>
+      </div>
+
     </div>
   </div>
 </div>

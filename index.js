@@ -4,8 +4,41 @@ import { saveBase64AsFile } from '../../../../scripts/utils.js';
 const MODULE_NAME = 'roleplay_visual_director';
 const SESSION_KEY = `${MODULE_NAME}_api_keys`;
 const PERSISTENT_KEY = `${MODULE_NAME}_saved_api_keys`;
-const defaults = Object.freeze({ provider: 'openrouter', openrouterModel: 'google/gemini-2.5-flash-image', googleModel: 'gemini-3.1-flash-image', novitaModel: 'sd_xl_base_1.0.safetensors', aspectRatio: '1:1', quality: 'auto', messages: 8, includePlayerReference: true });
+
+const DEFAULT_PROXY_URL_EXTERNAL = 'https://antigravity21.zeabur.app/v1';
+const DEFAULT_PROXY_URL_INTERNAL = 'http://cliproxyapi-musess.zeabur.internal:8317/v1';
+const DEFAULT_PROXY_KEY = 'sk-antigravity21-secure-key';
+
+const defaults = Object.freeze({
+    provider: 'proxy',
+    proxyUrl: DEFAULT_PROXY_URL_EXTERNAL,
+    proxyModel: 'gemini-3.1-flash-image',
+    proxyChatModel: 'gemini-3.8-flash-high',
+    openrouterModel: 'google/gemini-2.5-flash-image',
+    googleModel: 'gemini-3.1-flash-image',
+    novitaModel: 'sd_xl_base_1.0.safetensors',
+    aspectRatio: '1:1',
+    quality: 'auto',
+    messages: 8,
+    includePlayerReference: true,
+});
+
 const modelChoices = Object.freeze({
+    proxy: [
+        ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas)'],
+        ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente'],
+        ['google1/gemini-3.1-flash-image', 'Google Conta 1 — Gemini 3.1 Flash Image'],
+        ['google2/gemini-3.1-flash-image', 'Google Conta 2 — Gemini 3.1 Flash Image'],
+        ['google3/gemini-3.1-flash-image', 'Google Conta 3 — Gemini 3.1 Flash Image'],
+        ['google4/gemini-3.1-flash-image', 'Google Conta 4 — Gemini 3.1 Flash Image'],
+        ['google5/gemini-3.1-flash-image', 'Google Conta 5 — Gemini 3.1 Flash Image'],
+        ['google6/gemini-3.1-flash-image', 'Google Conta 6 — Gemini 3.1 Flash Image'],
+        ['google7/gemini-3.1-flash-image', 'Google Conta 7 — Gemini 3.1 Flash Image'],
+        ['codex/gpt-image-2.5', 'Codex GPT Image 2.5'],
+        ['gpt-image-2', 'GPT Image 2.0'],
+        ['gpt-image-2.5-flare', 'GPT Image 2.5 Flare'],
+        ['gpt-image-2.5-sunburst', 'GPT Image 2.5 Sunburst'],
+    ],
     openrouter: [
         ['google/gemini-3.1-flash-lite-image', 'Gemini 3.1 Flash Lite Image — econômico'],
         ['google/gemini-2.5-flash-image', 'Gemini 2.5 Flash Image — qualidade'],
@@ -31,6 +64,8 @@ const modelChoices = Object.freeze({
         ['novita/flux-1-kontext-max', 'FLUX.1 Kontext Max'],
     ],
 });
+
+let proxyCatalog = [];
 let openRouterCatalog = [];
 let novitaCatalog = [];
 
@@ -40,10 +75,23 @@ function settings() {
     return context.extensionSettings[MODULE_NAME];
 }
 
-function getStoredKeys(storageKey) { try { return JSON.parse(localStorage.getItem(storageKey) || sessionStorage.getItem(storageKey) || '{}'); } catch { return {}; } }
+function getStoredKeys(storageKey) {
+    try {
+        return JSON.parse(localStorage.getItem(storageKey) || sessionStorage.getItem(storageKey) || '{}');
+    } catch {
+        return {};
+    }
+}
+
 function sessionKeys() { return getStoredKeys(SESSION_KEY); }
 function persistentKeys() { return getStoredKeys(PERSISTENT_KEY); }
-function apiKeyFor(provider) { return sessionKeys()[provider] || persistentKeys()[provider] || ''; }
+
+function apiKeyFor(provider) {
+    const key = sessionKeys()[provider] || persistentKeys()[provider] || '';
+    if (!key && provider === 'proxy') return DEFAULT_PROXY_KEY;
+    return key;
+}
+
 function saveApiKey(provider, key, remember) {
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...sessionKeys(), [provider]: key }));
     const saved = persistentKeys();
@@ -51,19 +99,76 @@ function saveApiKey(provider, key, remember) {
     else delete saved[provider];
     localStorage.setItem(PERSISTENT_KEY, JSON.stringify(saved));
 }
-function forgetPersistentKey(provider) { const saved = persistentKeys(); delete saved[provider]; localStorage.setItem(PERSISTENT_KEY, JSON.stringify(saved)); }
-function notice(message, error = false) { $('#rvl_status').text(message).toggleClass('rvl-error', error); }
 
-function modelSettingKey(provider) { return provider === 'google' ? 'googleModel' : provider === 'novita' ? 'novitaModel' : 'openrouterModel'; }
+function forgetPersistentKey(provider) {
+    const saved = persistentKeys();
+    delete saved[provider];
+    localStorage.setItem(PERSISTENT_KEY, JSON.stringify(saved));
+}
+
+function notice(message, error = false) {
+    $('#rvl_status').text(message).toggleClass('rvl-error', error);
+}
+
+function modelSettingKey(provider) {
+    switch (provider) {
+        case 'proxy': return 'proxyModel';
+        case 'google': return 'googleModel';
+        case 'novita': return 'novitaModel';
+        default: return 'openrouterModel';
+    }
+}
 
 function choicesFor(provider) {
-    if (provider === 'openrouter' && openRouterCatalog.length) return openRouterCatalog.map(model => {
-        const acceptsReferences = Boolean(model.supported_parameters?.input_references);
-        const displayName = model.name || model.id;
-        return [model.id, `${displayName}${acceptsReferences ? ' — aceita referências' : ''}`];
-    });
+    if (provider === 'proxy' && proxyCatalog.length) {
+        return proxyCatalog.map(m => [m.id, m.name || m.id]);
+    }
+    if (provider === 'openrouter' && openRouterCatalog.length) {
+        return openRouterCatalog.map(model => {
+            const acceptsReferences = Boolean(model.supported_parameters?.input_references);
+            const displayName = model.name || model.id;
+            return [model.id, `${displayName}${acceptsReferences ? ' — aceita referências' : ''}`];
+        });
+    }
     if (provider === 'novita') return modelChoices.novita;
     return modelChoices[provider] || [];
+}
+
+async function refreshProxyCatalog() {
+    const s = settings();
+    const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+    const key = $('#rvl_api_key').val().trim() || apiKeyFor('proxy');
+    try {
+        notice('Buscando todos os modelos do Proxy…');
+        const response = await fetch(`${url}/models`, {
+            headers: { Authorization: `Bearer ${key}` },
+        });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error?.message || json.message || 'Não foi possível carregar o catálogo do Proxy.');
+        const allModels = json.data || [];
+        const imageModels = allModels.filter(m => {
+            const id = (m.id || '').toLowerCase();
+            return id.includes('image') || id.includes('flux') || id.includes('sd') || id.includes('paint');
+        });
+        const targetList = imageModels.length ? imageModels : allModels;
+        proxyCatalog = targetList.map(m => {
+            let label = m.id;
+            if (m.id === 'gemini-3.1-flash-image') label = 'Google Gemini — Pool Automático (7 Contas)';
+            else if (m.id.startsWith('google') && m.id.includes('image')) {
+                const acct = m.id.split('/')[0];
+                label = `${acct.toUpperCase()} — ${m.id}`;
+            } else if (m.id === 'gpt-image-2.5') {
+                label = 'GPT Image 2.5 — OpenAI Mais Potente';
+            }
+            return { id: m.id, name: label };
+        }).sort((a, b) => a.id.localeCompare(b.id));
+
+        syncUi();
+        notice(`${proxyCatalog.length} modelos de imagem identificados no Proxy.`);
+    } catch (error) {
+        console.error(`[${MODULE_NAME}] Could not load Proxy models:`, error);
+        notice(error.message || 'Falha ao buscar modelos do Proxy.', true);
+    }
 }
 
 async function refreshOpenRouterCatalog() {
@@ -104,8 +209,6 @@ async function refreshNovitaCatalog() {
                 baseModel: model.base_model,
             })));
             cursor = json.pagination?.next_cursor;
-            // Novita can expose thousands of checkpoints. Populate the select as
-            // soon as the first page arrives instead of making the UI look frozen.
             novitaCatalog = [...new Map(models.map(model => [model.id, model])).values()].sort((a, b) => a.name.localeCompare(b.name));
             syncUi();
             notice(cursor ? `${novitaCatalog.length} modelos Novita carregados; buscando mais…` : `${novitaCatalog.length} modelos de imagem carregados da Novita.`);
@@ -140,14 +243,10 @@ async function dislikeImage(messageId, mode) {
     const context = SillyTavern.getContext();
     const record = context.chat?.[messageId]?.extra?.[MODULE_NAME];
     const memory = getVisualMemory();
-    // A rejection of the currently approved image must also remove it from
-    // continuity, otherwise the "redo" would keep feeding the rejected look.
     if (record?.imageUrl && memory.lastApprovedImage?.url === record.imageUrl) {
         delete memory.lastApprovedImage;
         await context.saveMetadata();
     }
-    // SillyTavern 1.14+ provides this context API, which removes the message
-    // from both the visible chat and its saved history before regenerating.
     if (typeof context.deleteMessage === 'function') {
         await context.deleteMessage(messageId);
     } else {
@@ -170,13 +269,26 @@ async function loadImageReference(url, name, role) {
         const response = await fetch(url);
         if (!response.ok) return null;
         const blob = await response.blob();
-        const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
+        const image = await new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(dataUrlToImage(reader.result));
+            reader.readAsDataURL(blob);
+        });
         return image ? { ...image, name, role } : null;
-    } catch { return null; }
+    } catch {
+        return null;
+    }
 }
 
 function playerAvatarSource() {
-    const selectors = ['#user_avatar_block .avatar.selected img', '#user_avatar_block .selected img', '#user_avatar_block .avatar img', '#chat .mes[is_user="true"] .avatar img', '#chat .mes .avatar img[src*="User Avatars"]', '#chat .mes .avatar img[src*="User%20Avatars"]'];
+    const selectors = [
+        '#user_avatar_block .avatar.selected img',
+        '#user_avatar_block .selected img',
+        '#user_avatar_block .avatar img',
+        '#chat .mes[is_user="true"] .avatar img',
+        '#chat .mes .avatar img[src*="User Avatars"]',
+        '#chat .mes .avatar img[src*="User%20Avatars"]',
+    ];
     for (const selector of selectors) {
         const source = $(selector).first().attr('src');
         if (source) return source;
@@ -191,15 +303,14 @@ async function characterReferences() {
     const activeGroup = context.groupId != null
         ? (context.groups || []).find(group => group.id === context.groupId)
         : null;
-    // Never resolve a character by display name: names can repeat across cards and
-    // chats. For a solo chat use precisely the active card; for a group use only
-    // that group's declared avatar members.
+
     const groupAvatars = new Set(activeGroup?.members || []);
     const characters = activeGroup
         ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
         : (active?.avatar ? [active] : []);
     const references = await Promise.all(characters.map(character => loadImageReference(`/characters/${encodeURIComponent(character.avatar)}`, character.name, 'character')));
     const validReferences = references.filter(Boolean);
+
     if (settings().includePlayerReference) {
         const playerReference = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
         if (playerReference) validReferences.push(playerReference);
@@ -210,10 +321,16 @@ async function characterReferences() {
             const response = await fetch(approved.url);
             if (response.ok) {
                 const blob = await response.blob();
-                const image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(dataUrlToImage(reader.result)); reader.readAsDataURL(blob); });
+                const image = await new Promise(resolve => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(dataUrlToImage(reader.result));
+                    reader.readAsDataURL(blob);
+                });
                 if (image) validReferences.push({ ...image, name: 'approved continuity image', continuity: true, role: 'continuity' });
             }
-        } catch { console.warn(`[${MODULE_NAME}] Could not load approved continuity image.`); }
+        } catch {
+            console.warn(`[${MODULE_NAME}] Could not load approved continuity image.`);
+        }
     }
     return validReferences.slice(0, 5);
 }
@@ -230,7 +347,7 @@ function buildPrompt(mode, references) {
     const modeInstruction = {
         scene: 'Create a cinematic third-person scene from the current roleplay moment.',
         pov: 'Create a true first-person roleplay image: the camera IS physically the adult male player\'s eyes, at his natural eye level. This is an embodied, camera-facing interaction, never a detached spectator image. The roleplay partner must act toward the lens: look at the lens, speak to the lens, reach toward the lens, hold an offered object toward the lens, or touch near the lens when the context implies contact. Render the exact distance, scale, angle, depth, and intimacy as the player would see it. The player is behind the camera and MUST NOT be drawn as a separate standing, seated, facing, over-the-shoulder, or duplicate person. Only the player\'s natural foreground hands, lower arms, knees, legs, or shoes may enter the frame when contextually visible; use the player avatar only to keep those visible parts consistent. Place the active character close to the lens during close moments so they fill the view naturally.',
-        look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player\'s point of view as if standing in front of them.`,
+        look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player's point of view as if standing in front of them.`,
     }[mode];
     const approvedContinuity = references.some(reference => reference.continuity);
     const referenceRoles = references.length
@@ -263,10 +380,85 @@ Current roleplay context:
 ${history || 'No chat messages are available.'}`;
 }
 
+async function generateProxy(key, prompt, references) {
+    const s = settings();
+    const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+    const model = s.proxyModel || 'gemini-3.1-flash-image';
+    const isGemini = model.includes('gemini') || model.startsWith('google');
+
+    if (isGemini) {
+        const contentParts = [{ type: 'text', text: prompt }];
+        for (const ref of references) {
+            if (ref.dataUrl) {
+                contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: ref.dataUrl },
+                });
+            }
+        }
+        const response = await fetch(`${url}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model,
+                messages: [{ role: 'user', content: contentParts }],
+            }),
+        });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação com modelo Gemini.');
+
+        let imageUrl = json.choices?.[0]?.message?.images?.[0]?.image_url?.url
+            || json.choices?.[0]?.message?.images?.[0]?.url;
+
+        if (!imageUrl && typeof json.choices?.[0]?.message?.content === 'string') {
+            const content = json.choices[0].message.content;
+            const match = content.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/);
+            if (match) imageUrl = match[0];
+        }
+
+        if (!imageUrl) throw new Error('A resposta do Gemini no Proxy não trouxe os dados da imagem gerada.');
+        if (/^https?:\/\//i.test(imageUrl)) {
+            return { dataUrl: await novitaImageFromUrl(imageUrl) };
+        }
+        return { dataUrl: imageUrl };
+    } else {
+        const [width, height] = aspectSize(s.aspectRatio);
+        const rawSize = `${width}x${height}`;
+        const allowedSizes = new Set(['1024x1024', '1792x1024', '1024x1792', '1024x768', '768x1024']);
+        const size = allowedSizes.has(rawSize) ? rawSize : '1024x1024';
+
+        const response = await fetch(`${url}/images/generations`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model,
+                prompt,
+                size,
+            }),
+        });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação de imagem GPT.');
+
+        const item = json.data?.[0];
+        if (!item) throw new Error('O Proxy não retornou dados de imagem do modelo GPT.');
+        if (item.b64_json) {
+            return { dataUrl: `data:image/png;base64,${item.b64_json}` };
+        }
+        if (item.url) {
+            return { dataUrl: await novitaImageFromUrl(item.url) };
+        }
+        throw new Error('Nenhuma imagem legível na resposta do GPT.');
+    }
+}
+
 async function generateOpenRouter(key, prompt, references) {
     const s = settings();
-    // Only portable parameters go here. Image models have different optional knobs;
-    // sending an unsupported `quality` or `output_format` causes OpenRouter to reject the request.
     const body = { model: s.openrouterModel, prompt, aspect_ratio: s.aspectRatio, n: 1 };
     if (references.length) body.input_references = references.map(reference => ({ type: 'image_url', image_url: { url: reference.dataUrl } }));
     const response = await fetch('https://openrouter.ai/api/v1/images', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -291,7 +483,7 @@ async function generateGoogle(key, prompt, references) {
 }
 
 function aspectSize(aspectRatio) {
-    return ({ '16:9': [1344, 768], '9:16': [768, 1344], '4:3': [1024, 768], '3:4': [768, 1024], '1:1': [1024, 1024] })[aspectRatio] || [1024, 1024];
+    return ({ '16:9': [1792, 1024], '9:16': [1024, 1792], '4:3': [1024, 768], '3:4': [768, 1024], '1:1': [1024, 1024] })[aspectRatio] || [1024, 1024];
 }
 
 function wait(milliseconds) { return new Promise(resolve => setTimeout(resolve, milliseconds)); }
@@ -311,9 +503,13 @@ function novitaSafePrompt(prompt) {
 
 async function novitaImageFromUrl(url) {
     const imageResponse = await fetch(url);
-    if (!imageResponse.ok) throw new Error('A Novita gerou a imagem, mas ela não pôde ser baixada.');
+    if (!imageResponse.ok) throw new Error('Não foi possível baixar a imagem gerada.');
     const blob = await imageResponse.blob();
-    return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+    return new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+    });
 }
 
 async function waitForNovitaTask(key, taskId) {
@@ -330,11 +526,8 @@ async function waitForNovitaTask(key, taskId) {
 
 async function generateNovitaNative(key, model, prompt, references, width, height, aspectRatio) {
     const images = references.slice(0, 4).map(reference => reference.dataUrl);
-    // FLUX 2 aceita "largura*altura". Seedream usa "larguraxaltura".
     const fluxSize = `${width}*${height}`;
     const seedreamSize = `${width}x${height}`;
-    // FLUX 2 só aceita URLs públicas de referência. Os avatares locais do
-    // SillyTavern são data URLs e faziam a tarefa falhar durante a execução.
     const publicImages = images.filter(image => /^https?:\/\//i.test(image));
     const native = {
         'novita/z-image-turbo-lora': { endpoint: 'z-image-turbo-lora', body: { prompt, size: fluxSize, seed: -1 } },
@@ -398,8 +591,6 @@ async function generateNovita(key, prompt, references) {
     const nativeResult = await generateNovitaNative(key, s.novitaModel, safePrompt, references, width, height, s.aspectRatio);
     if (nativeResult) return nativeResult;
     const request = { model_name: s.novitaModel, prompt: safePrompt, width, height, image_num: 1, steps: 28, seed: -1, clip_skip: 1, guidance_scale: 6.5, sampler_name: 'Euler' };
-    // Standard Novita img2img accepts one base image. A contact sheet preserves
-    // both the active avatar(s) and the image approved with 👍 in that slot.
     const baseReference = await novitaReferenceSheet(references);
     const endpoint = baseReference ? 'img2img' : 'txt2img';
     if (baseReference) request.image_base64 = baseReference.data;
@@ -433,7 +624,6 @@ function renderChatActions() {
     toolbar.on('click', '[data-rvl-mode]', event => run($(event.currentTarget).data('rvl-mode')));
 }
 
-/** Saves the generated data URL as a SillyTavern media file and adds it to the active chat. */
 async function publishToChat(result, mode) {
     const image = dataUrlToImage(result.dataUrl);
     if (!image) throw new Error('A imagem gerada tem um formato inválido.');
@@ -475,61 +665,213 @@ function restoreFeedbackControls() {
     });
 }
 
+async function connectChatToProxy() {
+    const s = settings();
+    const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+    const key = $('#rvl_api_key').val().trim() || apiKeyFor('proxy');
+    const model = $('#rvl_chat_model').val() || s.proxyChatModel || 'gemini-3.8-flash-high';
+    s.proxyChatModel = model;
+
+    const statusEl = $('#rvl_chat_status');
+    statusEl.removeClass('rvl-error rvl-success').text('Testando e configurando o SillyTavern…');
+
+    try {
+        const testRes = await fetch(`${url}/models`, {
+            headers: { Authorization: `Bearer ${key}` },
+        });
+        if (!testRes.ok) {
+            throw new Error('Não foi possível conectar ao Proxy. Verifique a URL ou a chave.');
+        }
+
+        // 1. Set Main API to openai (Chat Completion)
+        if ($('#main_api').length) {
+            $('#main_api').val('openai').trigger('change');
+        }
+
+        // 2. Set Chat Completion Source to custom
+        if ($('#chat_completion_source').length) {
+            $('#chat_completion_source').val('custom').trigger('change');
+        }
+
+        // 3. Set Custom Endpoint URL
+        if ($('#custom_url').length) {
+            $('#custom_url').val(url).trigger('input').trigger('change');
+        }
+        if ($('#openai_reverse_proxy').length) {
+            $('#openai_reverse_proxy').val(url).trigger('input').trigger('change');
+        }
+
+        // 4. Set API Key
+        if ($('#api_key_custom').length) {
+            $('#api_key_custom').val(key).trigger('input').trigger('change');
+        }
+        if ($('#api_key_openai').length) {
+            $('#api_key_openai').val(key).trigger('input').trigger('change');
+        }
+
+        // 5. Select Chat Model
+        for (const selectId of ['#model_custom_select', '#model_openai_select']) {
+            if ($(selectId).length) {
+                if (!$(selectId).find(`option[value="${model}"]`).length) {
+                    $(selectId).append($('<option>', { value: model, text: model }));
+                }
+                $(selectId).val(model).trigger('change');
+            }
+        }
+
+        // 6. Trigger Connect button if present
+        const connectBtn = $('#api_button_custom:visible, #api_button_openai:visible, #api_button:visible').first();
+        if (connectBtn.length) {
+            connectBtn.trigger('click');
+        }
+
+        // 7. Save context settings
+        const context = SillyTavern.getContext();
+        if (context) {
+            if (context.main_api !== undefined) context.main_api = 'openai';
+            if (context.chat_completion_source !== undefined) context.chat_completion_source = 'custom';
+            context.saveSettingsDebounced?.();
+        }
+
+        statusEl.addClass('rvl-success').html(`✔ <b>Conectado com sucesso!</b> O SillyTavern agora usa o modelo <code>${model}</code> via nosso Proxy.`);
+    } catch (err) {
+        console.error(`[${MODULE_NAME}] Falha ao conectar chat ao proxy:`, err);
+        statusEl.addClass('rvl-error').text(`Erro: ${err.message || 'Falha ao conectar.'}`);
+    }
+}
+
 async function run(mode) {
     const provider = $('#rvl_provider').val();
     const key = $('#rvl_api_key').val().trim() || apiKeyFor(provider);
     if (!key) return notice('Cole a chave da API para este provedor.', true);
     saveApiKey(provider, key, $('#rvl_remember_key').prop('checked'));
-    $('#rvl_api_key').val('');
+
     try {
-        notice('Preparando contexto e referência do personagem…');
+        notice('Preparando contexto e referências do personagem…');
         const references = await characterReferences();
         notice('Gerando imagem… isto pode levar alguns segundos.');
         const prompt = buildPrompt(mode, references);
-        const result = provider === 'google' ? await generateGoogle(key, prompt, references) : provider === 'novita' ? await generateNovita(key, prompt, references) : await generateOpenRouter(key, prompt, references);
+
+        let result;
+        if (provider === 'proxy') {
+            result = await generateProxy(key, prompt, references);
+        } else if (provider === 'google') {
+            result = await generateGoogle(key, prompt, references);
+        } else if (provider === 'novita') {
+            result = await generateNovita(key, prompt, references);
+        } else {
+            result = await generateOpenRouter(key, prompt, references);
+        }
+
         showImage(result);
         notice('Enviando imagem para o chat…');
         const published = await publishToChat(result, mode);
         attachFeedbackControls(published.messageId, published.mode);
-        notice(result.cost != null ? `Imagem criada. Custo informado: US$ ${Number(result.cost).toFixed(4)}.` : 'Imagem criada.');
-    } catch (error) { console.error(`[${MODULE_NAME}]`, error); notice(error.message || 'Falha ao gerar a imagem.', true); }
+        notice(result.cost != null ? `Imagem criada. Custo informado: US$ ${Number(result.cost).toFixed(4)}.` : 'Imagem criada com sucesso.');
+    } catch (error) {
+        console.error(`[${MODULE_NAME}]`, error);
+        notice(error.message || 'Falha ao gerar a imagem.', true);
+    }
 }
 
 function syncUi() {
     const s = settings();
-    const provider = $('#rvl_provider').val();
+    const provider = $('#rvl_provider').val() || s.provider || 'proxy';
     const modelKey = modelSettingKey(provider);
     const selected = s[modelKey];
     const choices = choicesFor(provider);
     const modelSelect = $('#rvl_model').empty();
-    for (const [value, label] of choices) modelSelect.append($('<option>', { value, text: label }));
-    if (!choices.some(([value]) => value === selected)) modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
+
+    for (const [value, label] of choices) {
+        modelSelect.append($('<option>', { value, text: label }));
+    }
+    if (selected && !choices.some(([value]) => value === selected)) {
+        modelSelect.append($('<option>', { value: selected, text: `${selected} — personalizado` }));
+    }
     modelSelect.val(selected);
-    $('#rvl_catalog_tools').toggle(provider === 'openrouter');
-    $('#rvl_aspect').val(s.aspectRatio); $('#rvl_quality').val(s.quality); $('#rvl_messages').val(s.messages); $('#rvl_player_reference').prop('checked', Boolean(s.includePlayerReference)); $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
+
+    $('#rvl_proxy_url_wrapper').toggle(provider === 'proxy');
+    $('#rvl_proxy_url').val(s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL);
+    $('#rvl_catalog_tools').toggle(provider === 'openrouter' || provider === 'proxy');
+    $('#rvl_refresh_models').html(provider === 'proxy'
+        ? '<i class="fa-solid fa-rotate"></i> Atualizar modelos do Proxy'
+        : '<i class="fa-solid fa-rotate"></i> Atualizar todos os modelos');
+
+    $('#rvl_aspect').val(s.aspectRatio);
+    $('#rvl_quality').val(s.quality);
+    $('#rvl_messages').val(s.messages);
+    $('#rvl_player_reference').prop('checked', Boolean(s.includePlayerReference));
+    $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
+    $('#rvl_chat_model').val(s.proxyChatModel || 'gemini-3.8-flash-high');
 }
 
 async function init() {
-    const context = SillyTavern.getContext(); settings();
+    const context = SillyTavern.getContext();
+    settings();
     const html = await context.renderExtensionTemplateAsync('third-party/roleplay-visual-director', 'settings');
     $('#extensions_settings2').append(html);
     syncUi();
-    $('#rvl_provider').on('change', syncUi);
-    $('#rvl_refresh_models').on('click', refreshOpenRouterCatalog);
-    $('#rvl_remember_key').on('change', function () { if (!this.checked) forgetPersistentKey($('#rvl_provider').val()); });
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference').on('change', function () {
-        const s = settings(); const provider = $('#rvl_provider').val();
+
+    $('#rvl_provider').on('change', function () {
+        const s = settings();
+        s.provider = this.value;
+        syncUi();
+        context.saveSettingsDebounced();
+    });
+
+    $('#rvl_toggle_proxy_url').on('click', function () {
+        const s = settings();
+        const current = $('#rvl_proxy_url').val().trim();
+        const nextUrl = current === DEFAULT_PROXY_URL_INTERNAL ? DEFAULT_PROXY_URL_EXTERNAL : DEFAULT_PROXY_URL_INTERNAL;
+        $('#rvl_proxy_url').val(nextUrl);
+        s.proxyUrl = nextUrl;
+        context.saveSettingsDebounced();
+        notice(`URL do Proxy alterada para: ${nextUrl}`);
+    });
+
+    $('#rvl_proxy_url').on('input change', function () {
+        const s = settings();
+        s.proxyUrl = this.value.trim() || DEFAULT_PROXY_URL_EXTERNAL;
+        context.saveSettingsDebounced();
+    });
+
+    $('#rvl_refresh_models').on('click', function () {
+        const provider = $('#rvl_provider').val();
+        if (provider === 'proxy') refreshProxyCatalog();
+        else if (provider === 'openrouter') refreshOpenRouterCatalog();
+    });
+
+    $('#rvl_connect_chat_btn').on('click', connectChatToProxy);
+
+    $('#rvl_remember_key').on('change', function () {
+        if (!this.checked) forgetPersistentKey($('#rvl_provider').val());
+    });
+
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_chat_model').on('change', function () {
+        const s = settings();
+        const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
         else if (this.id === 'rvl_aspect') s.aspectRatio = this.value;
         else if (this.id === 'rvl_quality') s.quality = this.value;
         else if (this.id === 'rvl_player_reference') s.includePlayerReference = this.checked;
-        else s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
+        else if (this.id === 'rvl_chat_model') s.proxyChatModel = this.value;
+        else if (this.id === 'rvl_messages') s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
         context.saveSettingsDebounced();
     });
-    $('#rvl_scene').on('click', () => run('scene')); $('#rvl_pov').on('click', () => run('pov')); $('#rvl_look').on('click', () => run('look'));
-    if (apiKeyFor('openrouter')) refreshOpenRouterCatalog();
+
+    $('#rvl_scene').on('click', () => run('scene'));
+    $('#rvl_pov').on('click', () => run('pov'));
+    $('#rvl_look').on('click', () => run('look'));
+
+    if ($('#rvl_provider').val() === 'proxy' || defaults.provider === 'proxy') {
+        refreshProxyCatalog().catch(() => {});
+    } else if (apiKeyFor('openrouter')) {
+        refreshOpenRouterCatalog().catch(() => {});
+    }
+
     renderChatActions();
     restoreFeedbackControls();
+
     context.eventSource.on(context.event_types.CHAT_CHANGED, () => setTimeout(() => {
         renderChatActions();
         restoreFeedbackControls();
