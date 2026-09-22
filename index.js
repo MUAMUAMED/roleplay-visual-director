@@ -283,13 +283,13 @@ async function loadImageReference(urlOrElement, name, role) {
     if (!urlOrElement) return null;
     if (typeof urlOrElement === 'string' && urlOrElement.startsWith('data:image/')) {
         const parsed = dataUrlToImage(urlOrElement);
-        return parsed ? { ...parsed, name, role } : null;
+        if (parsed) return { ...parsed, name, role };
     }
     if (typeof urlOrElement === 'object' && urlOrElement.naturalWidth) {
         const dataUrl = await imageElementToDataUrl(urlOrElement);
         if (dataUrl) {
             const parsed = dataUrlToImage(dataUrl);
-            return parsed ? { ...parsed, name, role } : null;
+            if (parsed) return { ...parsed, name, role };
         }
     }
 
@@ -300,12 +300,13 @@ async function loadImageReference(urlOrElement, name, role) {
     } else {
         if (url.startsWith('/')) candidateUrls.push(url);
         candidateUrls.push(url.startsWith('/') ? url : `/${url}`);
-        if (!url.startsWith('/characters/') && !url.startsWith('characters/')) {
-            candidateUrls.push(`/characters/${encodeURIComponent(url.replace(/^\/+/, ''))}`);
-            candidateUrls.push(`/characters/${url.replace(/^\/+/, '')}`);
-        }
-        candidateUrls.push(`/User%20Avatars/${encodeURIComponent(url.replace(/^\/+/, ''))}`);
-        candidateUrls.push(`/api/characters/avatar?avatar=${encodeURIComponent(url.replace(/^\/+/, ''))}`);
+        const clean = url.replace(/^\/+/, '');
+        candidateUrls.push(`/characters/${encodeURIComponent(clean)}`);
+        candidateUrls.push(`/characters/${clean}`);
+        candidateUrls.push(`/User%20Avatars/${encodeURIComponent(clean)}`);
+        candidateUrls.push(`/User%20Avatars/${clean}`);
+        candidateUrls.push(`/api/characters/avatar?avatar=${encodeURIComponent(clean)}`);
+        candidateUrls.push(`/api/avatars/get?avatar=${encodeURIComponent(clean)}`);
     }
 
     for (const candidate of candidateUrls) {
@@ -330,7 +331,7 @@ async function loadImageReference(urlOrElement, name, role) {
 
     // Fallback: search rendered DOM img elements in SillyTavern
     try {
-        const domImgs = $(`#chat .mes[is_user="false"] .avatar img, #rm_info_avatar img, .character_select img[alt="${name}"], img[alt="${name}"]`);
+        const domImgs = $(`#chat .mes[is_user="false"] .avatar img, #rm_info_avatar img, #avatar-and-name-block img, .character_select img, img[alt="${name}"]`);
         for (const el of domImgs.toArray()) {
             if (el.complete && el.naturalWidth > 0) {
                 const dataUrl = await imageElementToDataUrl(el);
@@ -366,7 +367,23 @@ function playerAvatarSource() {
 async function characterReferences() {
     const context = SillyTavern.getContext();
     const allCharacters = context.characters || [];
-    const active = allCharacters[context.characterId];
+    
+    // Resolve active character robustly (by numeric or string ID, or by scanning chat)
+    let active = null;
+    if (context.characterId !== undefined && context.characterId !== null) {
+        active = allCharacters[Number(context.characterId)] || allCharacters[context.characterId];
+    }
+    if (!active) {
+        // Find by name from chat
+        const lastNonUsr = (context.chat || []).slice().reverse().find(m => !m.is_user && m.name);
+        if (lastNonUsr) {
+            active = allCharacters.find(c => c.name === lastNonUsr.name);
+        }
+    }
+    if (!active && allCharacters.length === 1) {
+        active = allCharacters[0];
+    }
+
     const activeGroup = context.groupId != null
         ? (context.groups || []).find(group => group.id === context.groupId)
         : null;
@@ -376,7 +393,7 @@ async function characterReferences() {
         ? allCharacters.filter(character => character.avatar && groupAvatars.has(character.avatar)).slice(0, 4)
         : (active ? [active] : []);
 
-    const references = await Promise.all(charactersToLoad.map(character => {
+    const references = await Promise.all(charactersToLoad.map(async character => {
         let avatarUrl = '';
         if (typeof context.getThumbnailUrl === 'function' && character.avatar) {
             try { avatarUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
@@ -390,10 +407,27 @@ async function characterReferences() {
             const chatAvatarImg = $('#chat .mes[is_user="false"] .avatar img').first().attr('src');
             if (chatAvatarImg) avatarUrl = chatAvatarImg;
         }
-        return loadImageReference(avatarUrl, character.name || currentCharacterName(), 'character');
+
+        const ref = await loadImageReference(avatarUrl, character.name || currentCharacterName(), 'character');
+        if (ref) {
+            // attach character description/visual traits if available
+            if (character.description) ref.charDescription = character.description;
+        }
+        return ref;
     }));
 
     const validReferences = references.filter(Boolean);
+
+    // Fallback if no reference found through characters array: directly capture the character avatar from the chat DOM!
+    if (!validReferences.some(r => r.role === 'character')) {
+        try {
+            const chatCharImg = $('#chat .mes[is_user="false"] .avatar img').last()[0] || $('#chat .mes[is_user="false"] .avatar img').first()[0];
+            if (chatCharImg) {
+                const domRef = await loadImageReference(chatCharImg, currentCharacterName(), 'character');
+                if (domRef) validReferences.unshift(domRef);
+            }
+        } catch {}
+    }
 
     if (settings().includePlayerReference) {
         const playerRef = await loadImageReference(playerAvatarSource(), context.name1 || 'the player', 'player');
@@ -421,42 +455,58 @@ async function characterReferences() {
 
 function currentCharacterName() {
     const context = SillyTavern.getContext();
-    return context.characters?.[context.characterId]?.name || 'the active character';
+    return context.characters?.[context.characterId]?.name 
+        || (context.chat || []).slice().reverse().find(m => !m.is_user && m.name)?.name 
+        || 'the active character';
 }
 
 function buildPrompt(mode, references) {
     const context = SillyTavern.getContext();
     const s = settings();
-    const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : currentCharacterName()}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
+    const charName = currentCharacterName();
+
+    // Extract character visual description if available
+    let charVisualTraits = '';
+    const charRef = references.find(r => r.role === 'character');
+    if (charRef?.charDescription) {
+        const cleanDesc = String(charRef.charDescription)
+            .replace(/<[^>]*>/g, '')
+            .replace(/\[.*?\]/g, '')
+            .slice(0, 500)
+            .trim();
+        if (cleanDesc) {
+            charVisualTraits = `\nCHARACTER VISUAL IDENTITY DETAILS:\nName: ${charName}\nAppearance & traits: ${cleanDesc}\n`;
+        }
+    }
+
+    const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : charName}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
     const modeInstruction = {
-        scene: 'Create a cinematic third-person scene from the current roleplay moment.',
-        pov: 'Create a true first-person roleplay image: the camera IS physically the adult male player\'s eyes, at his natural eye level. This is an embodied, camera-facing interaction, never a detached spectator image. The roleplay partner must act toward the lens: look at the lens, speak to the lens, reach toward the lens, hold an offered object toward the lens, or touch near the lens when the context implies contact. Render the exact distance, scale, angle, depth, and intimacy as the player would see it. The player is behind the camera and MUST NOT be drawn as a separate standing, seated, facing, over-the-shoulder, or duplicate person. Only the player\'s natural foreground hands, lower arms, knees, legs, or shoes may enter the frame when contextually visible; use the player avatar only to keep those visible parts consistent. Place the active character close to the lens during close moments so they fill the view naturally.',
-        look: `Create a clear full-body character reference of ${currentCharacterName()} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player's point of view as if standing in front of them.`,
+        scene: `Create a cinematic third-person scene featuring ${charName} from the current roleplay moment.`,
+        pov: `Create a true first-person POV roleplay image featuring ${charName}: the camera IS physically the adult male player's eyes, looking directly at ${charName} at eye level. ${charName} is the focal point of the shot, interacting directly toward the camera/player. The player is behind the camera and MUST NOT be drawn as a separate standing person.`,
+        look: `Create a clear full-body character reference of ${charName} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player's point of view as if standing in front of them.`,
     }[mode];
+
     const approvedContinuity = references.some(reference => reference.continuity);
     const referenceRoles = references.length
         ? references.map((reference, index) => reference.continuity
             ? `Image ${index + 1}: the approved previous scene. Use it as the continuity reference for the same clothing, accessories, setting, and visual style.`
             : reference.role === 'player'
                 ? `Image ${index + 1}: ${reference.name}'s player avatar. Use it as the authoritative identity only when the player is visibly present in a third-person scene or as natural foreground body parts in POV.`
-                : `Image ${index + 1}: ${reference.name}'s profile image. Use it as the authoritative visual identity reference for that character.`).join('\n')
+                : `Image ${index + 1}: PRIMARY CHARACTER REFERENCE for ${reference.name}. You MUST faithfully reproduce this character's exact face, facial features, hair style, hair color, eye color, and overall appearance from this image. Do NOT invent a random character.`).join('\n')
         : 'There are no visual references for this request.';
-    return `${modeInstruction}
 
-VISUAL REFERENCE ROLES:
+    return `CRITICAL INSTRUCTION:
+You are generating an image based directly on the attached visual reference images.
 ${referenceRoles}
+${charVisualTraits}
+${modeInstruction}
 
-IDENTITY LOCK:
-Render the same recognizable character(s) shown in their profile references. Keep face geometry, skin tone, eye shape and color, hairstyle and color, distinctive features, body proportions, and overall art style stable. Preserve a coherent adult character design across the image.
+MANDATORY CHARACTER LOCK:
+- The character ${charName} in the generated image MUST match the visual identity, face structure, eye color, and hair style from the attached character reference image.
+- Do NOT replace ${charName} with a generic or random person. Maintain complete fidelity to the reference image.
 
 CAST COMPOSITION:
-For romance or close relationship scenes, depict exactly one adult man: the male player. The remaining people are only the character partner(s) described in the roleplay. Never add a second man, male observer, male partner, or male bystander. Keep this cast and the described relationship dynamics consistent in both POV and third-person scenes.
-
-POV CAMERA RULE (applies only to POV):
-The lens is the player's face and viewpoint, not a camera filming the player. Do not show a second figure as the player, do not show the player from behind, and do not create an over-the-shoulder composition. All interaction from the partner is directed to the lens/player. A player avatar reference must never cause an additional visible person in a POV image.
-
-CONTINUITY LOCK:
-${approvedContinuity ? 'Use the final approved reference to continue its established character identity, clothing, accessories, setting, pose logic, and visual style whenever the recent roleplay does not explicitly change them.' : 'Derive clothing, accessories, condition, and setting from the recent roleplay context, carrying forward the established appearance when no change is described.'}
+Depict exactly ${charName} and the interaction with the player. In POV mode, only show ${charName} in front of the lens.
 
 Use a clean, wordless visual composition with cinematic framing.
 
@@ -471,7 +521,8 @@ async function generateProxy(key, prompt, references) {
     const isGemini = model.includes('gemini') || model.startsWith('google');
 
     if (isGemini) {
-        const contentParts = [{ type: 'text', text: prompt }];
+        // Enforce strong visual references first so Gemini pays highest attention to the reference images
+        const contentParts = [];
         for (const ref of references) {
             if (ref.dataUrl) {
                 contentParts.push({
@@ -480,6 +531,8 @@ async function generateProxy(key, prompt, references) {
                 });
             }
         }
+        contentParts.push({ type: 'text', text: prompt });
+
         const response = await fetch(`${url}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -859,6 +912,9 @@ async function run(mode) {
     try {
         notice('Preparando contexto e referências do personagem…');
         const references = await characterReferences();
+        const charRefFound = references.some(r => r.role === 'character');
+        console.info(`[${MODULE_NAME}] References carregadas:`, references.length, '| Personagem encontrado:', charRefFound);
+        
         notice('Gerando imagem… isto pode levar alguns segundos.');
         const prompt = buildPrompt(mode, references);
 
@@ -877,7 +933,8 @@ async function run(mode) {
         notice('Enviando imagem para o chat…');
         const published = await publishToChat(result, mode);
         attachFeedbackControls(published.messageId, published.mode);
-        notice(result.cost != null ? `Imagem criada. Custo informado: US$ ${Number(result.cost).toFixed(4)}.` : 'Imagem criada com sucesso.');
+        const refStatus = charRefFound ? 'com referência do personagem' : '(sem referência)';
+        notice(result.cost != null ? `Imagem criada ${refStatus}. Custo: US$ ${Number(result.cost).toFixed(4)}.` : `Imagem criada ${refStatus}.`);
     } catch (error) {
         console.error(`[${MODULE_NAME}]`, error);
         notice(error.message || 'Falha ao gerar a imagem.', true);
