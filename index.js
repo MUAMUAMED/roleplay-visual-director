@@ -640,16 +640,32 @@ async function collectAllCandidates() {
         }
     }
 
-    // 4. Continuity scene
+    // 4. Últimas 2 imagens geradas no chat (Continuidade)
     if (s.includeContinuity !== false) {
         const memory = getVisualMemory();
-        let continuityUrl = memory.lastApprovedImage?.url || memory.lastGeneratedImage?.url;
-        if (!continuityUrl) {
-            const lastVisualMsg = (context.chat || []).slice().reverse().find(m => m.extra?.[MODULE_NAME]?.imageUrl && !m.extra[MODULE_NAME].excludedFromContinuity);
-            if (lastVisualMsg) continuityUrl = lastVisualMsg.extra[MODULE_NAME].imageUrl;
+        const foundUrls = [];
+
+        // Coleta até as 2 mensagens visuais mais recentes do chat que não foram excluídas
+        const recentGenMsgs = (context.chat || []).slice().reverse().filter(m => {
+            return m.extra?.[MODULE_NAME]?.imageUrl && !m.extra[MODULE_NAME].excludedFromContinuity;
+        });
+
+        for (const msg of recentGenMsgs) {
+            const u = msg.extra[MODULE_NAME].imageUrl;
+            if (u && !foundUrls.includes(u)) {
+                foundUrls.push(u);
+                if (foundUrls.length >= 2) break; // Máximo 2 últimas imagens geradas!
+            }
         }
 
-        if (continuityUrl) {
+        // Se não achou 2 no chat mas tem na memória
+        if (foundUrls.length === 0) {
+            if (memory.lastApprovedImage?.url) foundUrls.push(memory.lastApprovedImage.url);
+            else if (memory.lastGeneratedImage?.url) foundUrls.push(memory.lastGeneratedImage.url);
+        }
+
+        for (let i = 0; i < foundUrls.length; i++) {
+            const continuityUrl = foundUrls[i];
             try {
                 const response = await fetch(continuityUrl);
                 if (response.ok) {
@@ -661,27 +677,29 @@ async function collectAllCandidates() {
                     });
                     if (image?.dataUrl) {
                         const isApproved = memory.lastApprovedImage?.url === continuityUrl;
+                        const labelTitle = isApproved ? 'Cena Aprovada (👍)' : (i === 0 ? 'Última Imagem Gerada' : 'Penúltima Imagem Gerada');
+                        const labelBadge = i === 0 ? 'Cena Anterior #1' : 'Cena Anterior #2';
                         candidates.push({
-                            id: 'continuity_img',
-                            name: isApproved ? 'Cena Aprovada (👍)' : 'Última Imagem Gerada',
+                            id: `continuity_img_${i}`,
+                            name: labelTitle,
                             role: 'continuity',
-                            roleLabel: 'Cena Anterior',
-                            badgeBg: 'rgba(251, 191, 36, 0.25)',
+                            roleLabel: labelBadge,
+                            badgeBg: 'rgba(251, 191, 36, 0.28)',
                             badgeColor: '#fbbf24',
-                            hint: 'Continuidade de roupas e ambiente da cena anterior',
+                            hint: i === 0 ? 'Visual mais recente gerado no chat' : 'Segunda cena anterior gerada',
                             continuity: true,
                             dataUrl: image.dataUrl,
-                            defaultSelected: true,
+                            defaultSelected: i === 0, // A 1ª vem selecionada por padrão; a 2ª fica pronta na grade!
                         });
                     }
                 }
-            } catch {
-                console.warn(`[${MODULE_NAME}] Could not load continuity image.`);
+            } catch (err) {
+                console.warn(`[${MODULE_NAME}] Could not load continuity image:`, err);
             }
         }
     }
 
-    return candidates;
+    return candidates.slice(0, 10);
 }
 
 function promptReferenceSelection(candidates, mode) {
@@ -714,81 +732,90 @@ function promptReferenceSelection(candidates, mode) {
 
         dialog.append($('<div>', {
             class: 'rvl-modal-subtitle',
-            text: `Marque quais imagens a IA deve usar como referência para esta geração (${modeTitle}):`
+            text: `Selecione até 10 imagens para a IA usar como referência visual (${modeTitle}):`
         }));
 
         const body = $('<div>', { class: 'rvl-modal-body' });
-        const list = $('<div>', { class: 'rvl-ref-list' });
+        const grid = $('<div>', { class: 'rvl-ref-grid' });
 
-        const items = candidates.map((c, idx) => ({ ...c, uniqueKey: `cand_${idx}` }));
+        const items = candidates.slice(0, 10).map((c, idx) => ({ ...c, uniqueKey: `cand_${idx}` }));
 
         function renderItem(item) {
             const card = $('<div>', {
-                class: `rvl-ref-item ${item.defaultSelected ? 'selected' : ''}`,
+                class: `rvl-ref-card ${item.defaultSelected ? 'selected' : ''}`,
                 'data-key': item.uniqueKey
             });
 
-            const checkWrapper = $('<div>', { class: 'rvl-ref-check-wrapper' });
+            const media = $('<div>', { class: 'rvl-card-media' });
+            media.append($('<img>', { src: item.dataUrl, alt: item.name }));
+
+            const checkWrapper = $('<div>', { class: 'rvl-card-check' });
             const check = $('<input>', {
                 type: 'checkbox',
                 class: 'rvl-ref-check',
                 checked: Boolean(item.defaultSelected)
             });
             checkWrapper.append(check);
-            card.append(checkWrapper);
+            media.append(checkWrapper);
 
-            const thumbWrapper = $('<div>', {
-                class: 'rvl-ref-thumb-wrapper',
-                title: 'Clique para abrir em tela cheia'
-            });
-            thumbWrapper.append($('<img>', { src: item.dataUrl, alt: item.name }));
-            thumbWrapper.append($('<span>', {
-                class: 'rvl-ref-zoom-btn',
-                html: '<i class="fa-solid fa-magnifying-glass-plus"></i>'
-            }));
-            card.append(thumbWrapper);
-
-            const info = $('<div>', { class: 'rvl-ref-info' });
-            const headerRow = $('<div>', { class: 'rvl-ref-header-row' });
-            headerRow.append($('<span>', {
-                class: 'rvl-ref-badge',
+            media.append($('<span>', {
+                class: 'rvl-card-badge',
                 text: item.roleLabel,
-                css: { background: item.badgeBg || 'rgba(255,255,255,0.15)', color: item.badgeColor || '#fff' }
+                css: { background: item.badgeBg || 'rgba(0,0,0,0.6)', color: item.badgeColor || '#fff' }
             }));
-            headerRow.append($('<span>', { class: 'rvl-ref-name', text: item.name, title: item.name }));
-            info.append(headerRow);
 
-            if (item.hint) {
-                info.append($('<div>', { class: 'rvl-ref-hint', text: item.hint }));
-            }
-            card.append(info);
-
-            thumbWrapper.on('click', function (e) {
-                e.stopPropagation();
-                openLightbox(item.dataUrl, `${item.name} (${item.roleLabel})`);
+            const zoomBtn = $('<button>', {
+                type: 'button',
+                class: 'rvl-card-zoom-btn',
+                html: '<i class="fa-solid fa-magnifying-glass-plus"></i>',
+                title: 'Ver em tela cheia'
             });
+            media.append(zoomBtn);
+            card.append(media);
+
+            const meta = $('<div>', { class: 'rvl-card-meta' });
+            meta.append($('<div>', { class: 'rvl-card-title', text: item.name, title: item.name }));
+            if (item.hint) {
+                meta.append($('<div>', { class: 'rvl-card-hint', text: item.hint, title: item.hint }));
+            }
+            card.append(meta);
+
+            function toggleSelect(forceVal) {
+                const nextVal = typeof forceVal === 'boolean' ? forceVal : !item.defaultSelected;
+                if (nextVal) {
+                    const currentCount = items.filter(it => it.defaultSelected).length;
+                    if (currentCount >= 10 && !item.defaultSelected) {
+                        notice('Limite máximo de 10 referências atingido.', true);
+                        check.prop('checked', false);
+                        return;
+                    }
+                }
+                item.defaultSelected = nextVal;
+                check.prop('checked', nextVal);
+                card.toggleClass('selected', nextVal);
+                updateCount();
+            }
 
             card.on('click', function (e) {
-                if ($(e.target).is('input[type="checkbox"]')) return;
-                const isChecked = !check.prop('checked');
-                check.prop('checked', isChecked);
-                card.toggleClass('selected', isChecked);
-                item.defaultSelected = isChecked;
-                updateCount();
+                if ($(e.target).closest('.rvl-card-zoom-btn').length) return;
+                toggleSelect();
             });
 
-            check.on('change', function () {
-                const isChecked = this.checked;
-                card.toggleClass('selected', isChecked);
-                item.defaultSelected = isChecked;
-                updateCount();
+            check.on('click change', function (e) {
+                e.stopPropagation();
+                toggleSelect(this.checked);
+            });
+
+            zoomBtn.on('click', function (e) {
+                e.stopPropagation();
+                openLightbox(item.dataUrl, `${item.name} (${item.roleLabel})`);
             });
 
             return card;
         }
 
-        items.forEach(item => list.append(renderItem(item)));
-        body.append(list);
+        items.forEach(item => grid.append(renderItem(item)));
+        body.append(grid);
 
         const addSection = $('<div>', { class: 'rvl-add-ref-section' });
         const fileInput = $('<input>', {
@@ -800,31 +827,35 @@ function promptReferenceSelection(candidates, mode) {
         const addBtn = $('<button>', {
             type: 'button',
             class: 'menu_button rvl-add-ref-btn',
-            html: '<i class="fa-solid fa-file-arrow-up"></i> + Enviar outra foto do seu aparelho como referência'
+            html: '<i class="fa-solid fa-file-arrow-up"></i> + Enviar outra foto do seu aparelho'
         });
         addBtn.on('click', () => fileInput.click());
 
         fileInput.on('change', function () {
             const file = this.files?.[0];
             if (!file) return;
+            if (items.length >= 10) {
+                notice('Limite máximo de 10 referências atingido.', true);
+                return;
+            }
             const reader = new FileReader();
             reader.onload = function () {
                 const dataUrl = reader.result;
                 const newItem = {
                     id: `custom_${Date.now()}`,
                     uniqueKey: `custom_${Date.now()}`,
-                    name: file.name.slice(0, 24) || 'Foto enviada',
+                    name: file.name.slice(0, 20) || 'Foto enviada',
                     role: 'attachment',
                     roleLabel: 'Upload Manual',
-                    badgeBg: 'rgba(236, 72, 153, 0.25)',
+                    badgeBg: 'rgba(236, 72, 153, 0.3)',
                     badgeColor: '#f472b6',
-                    hint: 'Foto enviada manualmente agora como referência para esta cena',
+                    hint: 'Foto enviada agora para esta cena',
                     dataUrl,
                     defaultSelected: true,
                 };
                 items.push(newItem);
                 const el = renderItem(newItem);
-                list.append(el);
+                grid.append(el);
                 updateCount();
                 el[0]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             };
@@ -855,7 +886,7 @@ function promptReferenceSelection(candidates, mode) {
         const confirmBtn = $('<button>', {
             type: 'button',
             class: 'menu_button menu_button_primary rvl-btn-confirm',
-            html: '<i class="fa-solid fa-wand-magic-sparkles"></i> Gerar Imagem (<span class="rvl-count">0</span>)'
+            html: '<i class="fa-solid fa-wand-magic-sparkles"></i> Gerar Imagem (<span class="rvl-count">0</span> / 10)'
         });
 
         actions.append(cancelBtn).append(confirmBtn);
@@ -888,7 +919,7 @@ function promptReferenceSelection(candidates, mode) {
         });
 
         confirmBtn.on('click', function () {
-            const selected = items.filter(it => it.defaultSelected).map(it => {
+            const selected = items.filter(it => it.defaultSelected).slice(0, 10).map(it => {
                 const parsed = dataUrlToImage(it.dataUrl);
                 return {
                     ...(parsed || {}),
@@ -908,7 +939,7 @@ function promptReferenceSelection(candidates, mode) {
 
 async function characterReferences() {
     const candidates = await collectAllCandidates();
-    return candidates.filter(c => c.defaultSelected).slice(0, 5).map(c => ({
+    return candidates.filter(c => c.defaultSelected).slice(0, 10).map(c => ({
         ...(dataUrlToImage(c.dataUrl) || {}),
         name: c.name,
         role: c.role,
@@ -1548,7 +1579,7 @@ async function run(mode) {
             }
             references = selected;
         } else {
-            references = candidates.filter(c => c.defaultSelected).slice(0, 5).map(c => ({
+            references = candidates.filter(c => c.defaultSelected).slice(0, 10).map(c => ({
                 ...(dataUrlToImage(c.dataUrl) || {}),
                 name: c.name,
                 role: c.role,
