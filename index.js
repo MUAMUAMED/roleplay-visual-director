@@ -689,9 +689,60 @@ async function generateOpenRouter(key, prompt, references) {
 
 async function generateGoogle(key, prompt, references) {
     const s = settings();
+    // 1. Tenta via proxy oficial com a chave direta se informado, ou proxy URL
+    const proxyUrl = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+    
+    // Tenta primeiro via proxy (onde temos as 7 contas configuradas sem bloqueio CORS de navegador)
+    try {
+        const contentParts = [];
+        for (const ref of references) {
+            if (ref.dataUrl) {
+                contentParts.push({
+                    type: 'image_url',
+                    image_url: { url: ref.dataUrl },
+                });
+            }
+        }
+        contentParts.push({ type: 'text', text: prompt });
+
+        const response = await fetch(`${proxyUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${key || DEFAULT_PROXY_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: s.googleModel || 'gemini-3.1-flash-image',
+                messages: [{ role: 'user', content: contentParts }],
+            }),
+        });
+
+        if (response.ok) {
+            const json = await response.json();
+            let imageUrl = json.choices?.[0]?.message?.images?.[0]?.image_url?.url
+                || json.choices?.[0]?.message?.images?.[0]?.url;
+
+            if (!imageUrl && typeof json.choices?.[0]?.message?.content === 'string') {
+                const content = json.choices[0].message.content;
+                const match = content.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/);
+                if (match) imageUrl = match[0];
+            }
+
+            if (imageUrl) {
+                if (/^https?:\/\//i.test(imageUrl)) {
+                    return { dataUrl: await novitaImageFromUrl(imageUrl) };
+                }
+                return { dataUrl: imageUrl };
+            }
+        }
+    } catch (proxyErr) {
+        console.warn(`[${MODULE_NAME}] Falha na rota proxy do Google:`, proxyErr);
+    }
+
+    // 2. Fallback direto da API Google
     const input = [{ type: 'text', text: prompt }];
     input.push(...references.map(reference => ({ type: 'image', mime_type: reference.mimeType, data: reference.data })));
-    const body = { model: s.googleModel, input, response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: s.aspectRatio, image_size: '1K' } };
+    const body = { model: s.googleModel || 'gemini-3.1-flash-image', input, response_format: { type: 'image', mime_type: 'image/jpeg', aspect_ratio: s.aspectRatio, image_size: '1K' } };
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const json = await response.json();
     if (!response.ok) throw new Error(json.error?.message || 'Google recusou a solicitação.');
