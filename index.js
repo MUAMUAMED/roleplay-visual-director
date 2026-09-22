@@ -520,7 +520,11 @@ function buildPrompt(mode, references) {
         }
     }
 
-    const history = (context.chat || []).slice(-Number(s.messages)).map(m => `${m.is_user ? 'Player' : charName}: ${String(m.mes || '').replace(/<[^>]*>/g, '').trim()}`).filter(Boolean).join('\n');
+    const cleanHistory = (context.chat || []).slice(-Number(s.messages)).map(m => {
+        const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
+        // Remove trechos potencialmente problemáticos ou marcadores de formatação interna
+        return `${m.is_user ? 'Player' : charName}: ${text}`;
+    }).filter(Boolean).join('\n');
     const modeInstruction = {
         scene: `Create a cinematic third-person scene featuring ${charName} from the current roleplay moment.`,
         pov: `Create a true first-person POV roleplay image featuring ${charName}: the camera IS physically the adult male player's eyes, looking directly at ${charName} at eye level. ${charName} is the focal point of the shot, interacting directly toward the camera/player. The player is behind the camera and MUST NOT be drawn as a separate standing person.`,
@@ -558,7 +562,7 @@ Depict exactly ${charName} and the interaction with the player. In POV mode, onl
 Use a clean, wordless visual composition with cinematic framing.
 
 Current roleplay context:
-${history || 'No chat messages are available.'}`;
+${cleanHistory || 'No chat messages are available.'}`;
 }
 
 async function generateProxy(key, prompt, references) {
@@ -601,6 +605,10 @@ async function generateProxy(key, prompt, references) {
             const content = json.choices[0].message.content;
             const match = content.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/);
             if (match) imageUrl = match[0];
+            else {
+                // Se não gerou imagem e retornou texto, é uma recusa dos filtros de segurança
+                throw new Error(`O Gemini não gerou a imagem: "${content.trim()}"`);
+            }
         }
 
         if (!imageUrl) throw new Error('A resposta do Gemini no Proxy não trouxe os dados da imagem gerada.');
@@ -726,6 +734,9 @@ async function generateGoogle(key, prompt, references) {
                 const content = json.choices[0].message.content;
                 const match = content.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/);
                 if (match) imageUrl = match[0];
+                else {
+                    throw new Error(`O Gemini não gerou a imagem: "${content.trim()}"`);
+                }
             }
 
             if (imageUrl) {
