@@ -164,6 +164,43 @@
         </details>
       </div>
 
+      <!-- SEÇÃO DO CONTEXTUALIZADOR & MEMÓRIA PROFUNDA (CLAUDE + GEMINI 1M) -->
+      <div class="rvl-divider"></div>
+      <div class="rvl-chat-box rvl-contextualizer-box">
+        <div class="rvl-chat-header">
+          <i class="fa-solid fa-brain"></i>
+          <b>Contextualizador de Memória Longa (Dual-AI: Claude + Gemini 1M)</b>
+        </div>
+        <p class="rvl-muted">
+          Permite que seu modelo de escrita (ex: <b>Claude 4.6 Sonnet/Opus</b>) funcione com contexto enxuto e barato, enquanto o <b>Gemini (1 Milhão de tokens)</b> lê o histórico completo nos bastidores e injeta fatos do passado antigo apenas quando necessário.
+        </p>
+
+        <label class="rvl-checkbox rvl-highlight-checkbox">
+          <input id="rvl_contextualizer_enabled" type="checkbox"> <b>Ativar Contextualizador Inteligente de Memória Longa</b>
+        </label>
+        <p class="rvl-muted">Quando ativo, antes de gerar cada resposta, o Gemini analisa o histórico antigo. Se o usuário citar algo do passado, a memória é extraída e injetada no Claude automaticamente sem poluir o chat.</p>
+
+        <div class="rvl-grid">
+          <label>Modelo de Memória (Proxy)
+            <select id="rvl_contextualizer_model">
+              <option value="gemini-3.8-flash-high" selected>Gemini 3.8 Flash (1M Tokens — Mais rápido e preciso)</option>
+              <option value="gemini-3.7-flash-high">Gemini 3.7 Flash</option>
+              <option value="gemini-3-flash">Gemini 3 Flash</option>
+              <option value="google1/gemini-3.8-flash-high">Google 1 (Gemini 3.8 Flash)</option>
+              <option value="google2/gemini-3.8-flash-high">Google 2 (Gemini 3.8 Flash)</option>
+            </select>
+          </label>
+
+          <label>Limite de Histórico Antigo (Mensagens)
+            <input id="rvl_contextualizer_history" type="number" min="20" max="1000" step="10" value="200" title="Quantidade de mensagens antigas analisadas pelo Gemini">
+          </label>
+
+          <label>Ativar a partir de (Mensagens no Chat)
+            <input id="rvl_contextualizer_threshold" type="number" min="5" max="50" step="5" value="15" title="Só dispara o extrator quando a conversa passar deste tamanho">
+          </label>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>

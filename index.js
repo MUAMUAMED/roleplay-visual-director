@@ -24,6 +24,11 @@ const defaults = Object.freeze({
     includeContinuity: true,
     includeChatAttachments: true,
     selectReferencesBeforeGenerate: true,
+    // Contextualizador & Memória Longa
+    contextualizerEnabled: false,
+    contextualizerModel: 'gemini-3.8-flash-high',
+    contextualizerHistoryLength: 200,
+    contextualizerThreshold: 15,
 });
 
 const modelChoices = Object.freeze({
@@ -1452,6 +1457,211 @@ function attachFeedbackControls(messageId, mode) {
     messageElement.append(feedback);
 }
 
+// ==========================================
+// MÓDULO CONTEXTUALIZADOR & MEMÓRIA LONGA
+// ==========================================
+
+const CONTEXT_INDICATOR_ID = 'rvl_contextualizer_indicator';
+
+function showMemoryIndicator(text = 'Consultando memória profunda do RP…') {
+    $(`#${CONTEXT_INDICATOR_ID}`).remove();
+    const ind = $('<div>', {
+        id: CONTEXT_INDICATOR_ID,
+        class: 'rvl-memory-indicator',
+        html: `<i class="fa-solid fa-brain fa-spin"></i> <span>${text}</span>`
+    });
+    $('#chat').append(ind);
+}
+
+function hideMemoryIndicator() {
+    $(`#${CONTEXT_INDICATOR_ID}`).remove();
+}
+
+/**
+ * Consulta o Gemini no Proxy para extrair fatos de longa distância do histórico
+ */
+async function queryDeepMemory(userMessage, chatHistory) {
+    const s = settings();
+    if (!s.contextualizerEnabled) return null;
+
+    // Se o chat ainda for curto, não há necessidade de recall distante
+    const threshold = Number(s.contextualizerThreshold) || defaults.contextualizerThreshold;
+    if (!chatHistory || chatHistory.length <= threshold) {
+        return null;
+    }
+
+    const proxyUrl = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+    const apiKey = apiKeyFor('proxy');
+    const model = s.contextualizerModel || defaults.contextualizerModel;
+
+    // Pega as mensagens anteriores (até o limite configurado)
+    const maxHistory = Math.max(20, Number(s.contextualizerHistoryLength) || defaults.contextualizerHistoryLength);
+    const relevantSlice = chatHistory.slice(-maxHistory);
+
+    // Formata o histórico do passado excluindo as últimas mensagens que o Claude já vê
+    const recentCount = 10;
+    const pastSlice = relevantSlice.slice(0, Math.max(0, relevantSlice.length - recentCount));
+    const recentSlice = relevantSlice.slice(-recentCount);
+
+    if (pastSlice.length === 0) return null;
+
+    const formattedPast = pastSlice.map((m, idx) => {
+        const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
+        const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
+        return `[Mensagem ${idx + 1}] ${sender}: ${text}`;
+    }).join('\n');
+
+    const formattedRecent = recentSlice.map(m => {
+        const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
+        const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
+        return `${sender}: ${text}`;
+    }).join('\n');
+
+    const systemPrompt = `[INSTRUÇÃO DE SISTEMA: ARQUIVISTA DE MEMÓRIA & CONTINUIDADE]
+Você é o módulo de memória de longo prazo para um roleplay literário de alta complexidade.
+Sua única responsabilidade é analisar o histórico antigo da história e extrair fatos reais do passado necessários para responder à fala atual do usuário.
+
+REGRAS RÍGIDAS:
+1. NÃO converse, NÃO dê opiniões e NÃO continue o roleplay.
+2. Seja cirúrgico, objetivo e 100% fiel aos acontecimentos já ocorridos no histórico.
+3. Se a mensagem recente do usuário ou o contexto imediato NÃO precisar de nenhuma lembrança antiga (conversa corriqueira, ação imediata do presente), responda APENAS: [SEM_RECALL].
+4. Se houver menção ou necessidade de relembrar fatos passados (locais visitados, itens obtidos, acordos feitos, segredos revelados, evolução de relacionamento):
+   - Extraia a verdade factual do histórico antigo.
+   - Indique detalhes concretos (nomes, lugares, termos exatos combinados).
+   - Formate sua resposta exclusivamente no modelo abaixo.
+
+FORMATO DE RESPOSTA (se houver fatos relevantes):
+[MEMÓRIA RECUPERADA]
+- Fato principal: <resumo direto do que aconteceu no passado>
+- Detalhes contextuais: <itens envolvidos, nomes, decisões tomadas>
+- Estado/Impacto atual: <como isso afeta a situação presente>`;
+
+    const userPrompt = `HISTÓRICO ANTIGO DA CONVERSA (MEMÓRIA PROFUNDA):
+${formattedPast}
+
+SITUAÇÃO RECENTE (ÚLTIMAS MENSAGENS):
+${formattedRecent}
+
+ÚLTIMA FALA DO USUÁRIO A SER RESPONDIDA AGORA:
+"${userMessage}"
+
+Avalie se há necessidade de recall do passado antigo:`;
+
+    try {
+        showMemoryIndicator();
+        const res = await fetch(`${proxyUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.1,
+                max_tokens: 600,
+            }),
+        });
+
+        if (!res.ok) {
+            console.warn('[Contextualizer] Falha na consulta de memória:', res.statusText);
+            return null;
+        }
+
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content?.trim();
+
+        if (!content || content.includes('[SEM_RECALL]')) {
+            return null;
+        }
+
+        return content;
+    } catch (err) {
+        console.warn('[Contextualizer] Erro ao consultar memória:', err);
+        return null;
+    } finally {
+        hideMemoryIndicator();
+    }
+}
+
+/**
+ * Injeta a memória do passado de forma invisível no prompt que será enviado ao modelo principal
+ */
+function injectMemoryPrompt(context, memoryText) {
+    if (!memoryText) return;
+
+    const formattedBlock = `\n\n[DIRETRIZ DE CONTINUIDADE - MEMÓRIA DE LONGO PRAZO RECUPERADA DO PASSADO]
+Os seguintes fatos verificados do passado desta história foram resgatados dos registros antigos e devem orientar organicamente sua interpretação e resposta:
+${memoryText}
+
+INSTRUÇÃO AO PERSONAGEM:
+- Use essas informações como memórias naturais do seu personagem.
+- Mantenha a profundidade psicológica, estilo narrativo e tom estabelecidos.
+- NÃO cite explicitamente "de acordo com meus registros" ou termos mecânicos; aja como alguém que genuinamente se lembra desses acontecimentos.\n`;
+
+    // 1. Tenta usar a API nativa de extensão de prompt do SillyTavern se disponível
+    if (typeof context.setExtensionPrompt === 'function') {
+        context.setExtensionPrompt(MODULE_NAME, formattedBlock, 0, false);
+        return;
+    }
+
+    // 2. Se não houver método nativo de setExtensionPrompt, injeta temporariamente na última mensagem do usuário enviada para a API
+    if (Array.isArray(context.chat) && context.chat.length > 0) {
+        const lastMsg = context.chat[context.chat.length - 1];
+        if (lastMsg && lastMsg.is_user) {
+            lastMsg._rvl_original_mes = lastMsg.mes;
+            lastMsg.mes = `${lastMsg.mes}\n\n<!-- ${formattedBlock} -->`;
+        }
+    }
+}
+
+/**
+ * Limpa qualquer resquício da injeção de memória após a geração
+ */
+function cleanMemoryPrompt(context) {
+    if (typeof context.setExtensionPrompt === 'function') {
+        context.setExtensionPrompt(MODULE_NAME, '', 0, false);
+    }
+    if (Array.isArray(context.chat)) {
+        for (let i = context.chat.length - 1; i >= Math.max(0, context.chat.length - 3); i--) {
+            const m = context.chat[i];
+            if (m && m._rvl_original_mes !== undefined) {
+                m.mes = m._rvl_original_mes;
+                delete m._rvl_original_mes;
+            }
+        }
+    }
+}
+
+/**
+ * Hook disparado antes da geração do SillyTavern
+ */
+async function onBeforeGenerate() {
+    const s = settings();
+    if (!s.contextualizerEnabled) return;
+
+    const context = SillyTavern.getContext();
+    const chat = context.chat;
+    if (!chat || chat.length === 0) return;
+
+    const lastMsg = chat[chat.length - 1];
+    const userText = lastMsg?.is_user ? String(lastMsg.mes || '').trim() : '';
+    if (!userText) return;
+
+    const memory = await queryDeepMemory(userText, chat);
+    if (memory) {
+        injectMemoryPrompt(context, memory);
+    }
+}
+
+function onGenerationFinished() {
+    const context = SillyTavern.getContext();
+    cleanMemoryPrompt(context);
+}
+
 function restoreFeedbackControls() {
     // Remove controles soltos ou duplicados que possam ter sido injetados erroneamente
     $('.rvl-feedback').remove();
@@ -1664,6 +1874,10 @@ function syncUi() {
     $('#rvl_select_references').prop('checked', s.selectReferencesBeforeGenerate !== false);
     $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
     $('#rvl_chat_model').val(s.proxyChatModel || 'gemini-3.8-flash-high');
+    $('#rvl_contextualizer_enabled').prop('checked', Boolean(s.contextualizerEnabled));
+    $('#rvl_contextualizer_model').val(s.contextualizerModel || defaults.contextualizerModel);
+    $('#rvl_contextualizer_history').val(s.contextualizerHistoryLength || defaults.contextualizerHistoryLength);
+    $('#rvl_contextualizer_threshold').val(s.contextualizerThreshold || defaults.contextualizerThreshold);
 }
 
 async function init() {
@@ -1728,8 +1942,27 @@ async function init() {
         else if (this.id === 'rvl_select_references') s.selectReferencesBeforeGenerate = this.checked;
         else if (this.id === 'rvl_chat_model') s.proxyChatModel = this.value;
         else if (this.id === 'rvl_messages') s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
+        else if (this.id === 'rvl_contextualizer_enabled') s.contextualizerEnabled = this.checked;
+        else if (this.id === 'rvl_contextualizer_model') s.contextualizerModel = this.value;
+        else if (this.id === 'rvl_contextualizer_history') s.contextualizerHistoryLength = Math.max(20, Math.min(1000, Number(this.value) || defaults.contextualizerHistoryLength));
+        else if (this.id === 'rvl_contextualizer_threshold') s.contextualizerThreshold = Math.max(5, Math.min(50, Number(this.value) || defaults.contextualizerThreshold));
         context.saveSettingsDebounced();
     });
+
+    // Eventos do Gerador / Interceptador de Memória do SillyTavern
+    const ev = context.event_types;
+    if (ev.GENERATION_STARTED) {
+        context.eventSource.on(ev.GENERATION_STARTED, onBeforeGenerate);
+    }
+    if (ev.GENERATE_BEFORE_COMBINE_PROMPTS) {
+        context.eventSource.on(ev.GENERATE_BEFORE_COMBINE_PROMPTS, onBeforeGenerate);
+    }
+    if (ev.CHARACTER_MESSAGE_RENDERED) {
+        context.eventSource.on(ev.CHARACTER_MESSAGE_RENDERED, onGenerationFinished);
+    }
+    if (ev.MESSAGE_RECEIVED) {
+        context.eventSource.on(ev.MESSAGE_RECEIVED, onGenerationFinished);
+    }
 
     $('#rvl_scene').on('click', () => run('scene'));
     $('#rvl_pov').on('click', () => run('pov'));
