@@ -1422,8 +1422,26 @@ async function publishToChat(result, mode) {
 }
 
 function attachFeedbackControls(messageId, mode) {
-    const messageElement = $(`#chat .mes[mesid="${messageId}"]`).length ? $(`#chat .mes[mesid="${messageId}"]`) : $('#chat .mes').last();
-    if (!messageElement.length || messageElement.find(`#rvl_feedback_${messageId}`).length) return;
+    if (messageId === undefined || messageId === null) return;
+    const context = SillyTavern.getContext();
+    const chatMsg = context.chat?.[messageId];
+    // Se a mensagem do chat não for gerada por esta extensão, NUNCA anexa controles
+    if (!chatMsg?.extra?.[MODULE_NAME]?.imageUrl) return;
+
+    // Procura o elemento exato da mensagem no DOM pelo atributo mesid
+    let messageElement = $(`#chat .mes[mesid="${messageId}"]`);
+    if (!messageElement.length) {
+        // Tenta achar com Number/parseInt estrito
+        messageElement = $('#chat .mes').filter((_, el) => {
+            const attr = $(el).attr('mesid');
+            return attr !== undefined && Number(attr) === Number(messageId);
+        });
+    }
+
+    // NUNCA fazer fallback para $('#chat .mes').last() ou anexar sem achar o elemento exato
+    if (!messageElement.length) return;
+    if (messageElement.find('.rvl-feedback').length || $(`#rvl_feedback_${messageId}`).length) return;
+
     const feedback = $('<div>', { id: `rvl_feedback_${messageId}`, class: 'rvl-feedback' });
     feedback.append($('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: fixar como referência de roupa e continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' }));
     feedback.append($('<button>', { class: 'menu_button rvl-remove-ref', type: 'button', title: 'Remover referência desta imagem (não usar na próxima)', html: '<i class="fa-solid fa-ban"></i>' }));
@@ -1434,33 +1452,10 @@ function attachFeedbackControls(messageId, mode) {
     messageElement.append(feedback);
 }
 
-async function removeImageFromContinuity(messageId) {
-    const context = SillyTavern.getContext();
-    const memory = getVisualMemory();
-    const record = context.chat?.[messageId]?.extra?.[MODULE_NAME];
-    
-    // Limpa a memória de continuidade se for essa imagem
-    if (record?.imageUrl) {
-        if (memory.lastApprovedImage?.url === record.imageUrl) {
-            delete memory.lastApprovedImage;
-        }
-        if (memory.lastGeneratedImage?.url === record.imageUrl) {
-            delete memory.lastGeneratedImage;
-        }
-        // Marca a mensagem para ser ignorada em buscas futuras
-        if (context.chat?.[messageId]?.extra?.[MODULE_NAME]) {
-            context.chat[messageId].extra[MODULE_NAME].excludedFromContinuity = true;
-        }
-    } else {
-        delete memory.lastApprovedImage;
-        delete memory.lastGeneratedImage;
-    }
-    await context.saveMetadata();
-    $(`#rvl_feedback_${messageId} .rvl-remove-ref`).addClass('rvl-excluded').attr('title', 'Imagem removida das referências');
-    notice('Esta imagem não será usada como referência para as próximas gerações.');
-}
-
 function restoreFeedbackControls() {
+    // Remove controles soltos ou duplicados que possam ter sido injetados erroneamente
+    $('.rvl-feedback').remove();
+
     const context = SillyTavern.getContext();
     (context.chat || []).forEach((message, messageId) => {
         const record = message.extra?.[MODULE_NAME];
