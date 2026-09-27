@@ -721,6 +721,7 @@ function promptReferenceSelection(candidates, mode) {
             pov: 'Primeira Pessoa (POV)',
             look: 'Visual Atual',
             spicy: 'Modo Spicy / Sensual',
+            pov_spicy: 'POV Spicy / Sensual',
         };
         const modeTitle = modeLabels[mode] || 'Imagem';
 
@@ -997,6 +998,7 @@ function buildPrompt(mode, references) {
         spicy: `Create an intimate, sensual, alluring, and emotionally charged roleplay scene featuring ${charName} directly immersed in the current narrative context.
 Focus on alluring posture, natural skin textures, expressive eyes, nuanced erotic tension, and intimate physical realism.
 Preserve the organic setting and mood of the current conversation without inventing generic artificial backgrounds.`,
+        pov_spicy: `Create a true first-person POV intimate and sensual roleplay image featuring ${charName}: the camera IS physically the adult male player's eyes, intimately close to ${charName} at eye level. ${charName} is the sensual focal point of the shot, interacting directly, passionately, and intimately toward the camera/player with alluring expression and posture. The player is behind the camera (only natural foreground hands, arms, or touch if contextually appropriate) and MUST NOT be drawn as a separate standing person.`,
     }[mode];
 
     const hasContinuityImage = references.some(reference => reference.continuity);
@@ -1026,7 +1028,7 @@ Look at the attached previous scene image. Unless the recent conversation explic
 The user has provided specific reference image(s). Carefully observe the outfit, clothing style, colors, pose, and visual context from the attached user image(s) and faithfully reproduce those clothing/pose elements for ${charName} in the generated image.\n`
         : '';
 
-    const spicyLockRule = mode === 'spicy'
+    const spicyLockRule = (mode === 'spicy' || mode === 'pov_spicy')
         ? `\nMANDATORY 100% IDENTITY & ANATOMICAL FIDELITY (ZERO TOLERANCE):
 - PRESERVE EXACTLY 100% of the reference subject's facial likeness, facial bone structure, jawline, haircut, bangs style, eye shape, eye color, skin tone, earrings, facial moles, and unique identity markers from Image 1.
 - Under NO circumstance change the character's recognizable facial identity, age, or ethnicity.
@@ -1052,7 +1054,7 @@ ${spicyLockRule}${continuityClothingRule}
 ${attachmentRule}
 
 CAST COMPOSITION:
-Depict exactly ${charName} and the interaction with the player. In POV mode, only show ${charName} in front of the lens.
+Depict exactly ${charName} and the interaction with the player. In POV mode and POV Spicy mode, only show ${charName} in front of the lens.
 
 Use a clean, wordless visual composition with cinematic framing.
 
@@ -1399,6 +1401,7 @@ function renderChatActions() {
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', title: 'Criar POV do Jogador', html: '<i class="fa-solid fa-eye"></i><span> POV</span>' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'look', title: 'Visual e Roupas', html: '<i class="fa-solid fa-shirt"></i><span> Visual</span>' }));
     toolbar.append($('<button>', { class: 'menu_button rvl-btn-spicy', type: 'button', 'data-rvl-mode': 'spicy', title: 'Criar Imagem Picante / Sensual', html: '<i class="fa-solid fa-pepper-hot"></i><span> Spicy</span>' }));
+    toolbar.append($('<button>', { class: 'menu_button rvl-btn-pov-spicy', type: 'button', 'data-rvl-mode': 'pov_spicy', title: 'Criar POV Picante / Sensual (1ª pessoa íntima)', html: '<i class="fa-solid fa-fire-flame-curved"></i><span> POV Spicy</span>' }));
 
     // 1. Tenta anexar ao lado ou dentro da barra de Quick Reply (#qr--bar ou .qr--buttons)
     const qrBar = $('#qr--bar .qr--buttons').first().length ? $('#qr--bar .qr--buttons').first() : $('#qr--bar').first();
@@ -1425,7 +1428,7 @@ async function publishToChat(result, mode) {
     const extension = image.mimeType.split('/')[1] || 'png';
     const fileName = `roleplay_visual_${Date.now()}`;
     const url = await saveBase64AsFile(image.data, 'Roleplay Visual Director', fileName, extension);
-    const modeName = { scene: 'Cena', pov: 'POV do jogador', look: 'Visual e roupas', spicy: 'Modo Spicy' }[mode] || 'Imagem';
+    const modeName = { scene: 'Cena', pov: 'POV do jogador', look: 'Visual e roupas', spicy: 'Modo Spicy', pov_spicy: 'POV Spicy' }[mode] || 'Imagem';
     const message = {
         name: 'Roleplay Visual Director',
         is_user: false,
@@ -2301,6 +2304,7 @@ async function init() {
     $('#rvl_pov').on('click', () => run('pov'));
     $('#rvl_look').on('click', () => run('look'));
     $('#rvl_spicy').on('click', () => run('spicy'));
+    $('#rvl_pov_spicy').on('click', () => run('pov_spicy'));
 
     if ($('#rvl_provider').val() === 'proxy' || defaults.provider === 'proxy') {
         refreshProxyCatalog().catch(() => {});

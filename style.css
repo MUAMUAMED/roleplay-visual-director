@@ -480,19 +480,31 @@
 }
 
 .rvl-chat-actions button[data-rvl-mode="spicy"],
+.rvl-chat-actions button[data-rvl-mode="pov_spicy"],
 .rvl-btn-spicy,
-#rvl_spicy {
+.rvl-btn-pov-spicy,
+#rvl_spicy,
+#rvl_pov_spicy {
   color: #ff6b81 !important;
   border-color: rgba(255, 107, 129, 0.45) !important;
   background: linear-gradient(135deg, rgba(255, 107, 129, 0.1) 0%, rgba(200, 30, 80, 0.15) 100%) !important;
 }
 .rvl-chat-actions button[data-rvl-mode="spicy"]:hover,
+.rvl-chat-actions button[data-rvl-mode="pov_spicy"]:hover,
 .rvl-btn-spicy:hover,
-#rvl_spicy:hover {
+.rvl-btn-pov-spicy:hover,
+#rvl_spicy:hover,
+#rvl_pov_spicy:hover {
   color: #ffffff !important;
   background: linear-gradient(135deg, #ff4757 0%, #c0392b 100%) !important;
   border-color: #ff4757 !important;
   box-shadow: 0 0 12px rgba(255, 71, 87, 0.45) !important;
+}
+.rvl-chat-actions button[data-rvl-mode="pov_spicy"],
+.rvl-btn-pov-spicy,
+#rvl_pov_spicy {
+  border-color: rgba(255, 71, 87, 0.6) !important;
+  background: linear-gradient(135deg, rgba(255, 71, 87, 0.18) 0%, rgba(180, 20, 70, 0.25) 100%) !important;
 }
 .rvl-spicy-checkbox {
   background: rgba(255, 71, 87, 0.08);
