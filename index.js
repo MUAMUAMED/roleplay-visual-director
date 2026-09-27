@@ -29,6 +29,7 @@ const defaults = Object.freeze({
     contextualizerModel: 'gemini-3.8-flash-high',
     contextualizerHistoryLength: 200,
     contextualizerThreshold: 15,
+    contextualizerDebounce: 8,
 });
 
 const modelChoices = Object.freeze({
@@ -1426,6 +1427,26 @@ async function publishToChat(result, mode) {
     return { messageId: context.chat.length - 1, mode };
 }
 
+async function removeImageFromContinuity(messageId) {
+    const context = SillyTavern.getContext();
+    const memory = getVisualMemory();
+    const record = context.chat?.[messageId]?.extra?.[MODULE_NAME];
+    if (record?.imageUrl) {
+        if (memory.lastApprovedImage?.url === record.imageUrl) delete memory.lastApprovedImage;
+        if (memory.lastGeneratedImage?.url === record.imageUrl) delete memory.lastGeneratedImage;
+        if (context.chat?.[messageId]?.extra?.[MODULE_NAME]) {
+            context.chat[messageId].extra[MODULE_NAME].excludedFromContinuity = true;
+        }
+    } else {
+        delete memory.lastApprovedImage;
+        delete memory.lastGeneratedImage;
+    }
+    await context.saveMetadata();
+    await saveChatConditional();
+    $(`#rvl_feedback_${messageId} .rvl-remove-ref`).addClass('rvl-excluded').attr('title', 'Imagem removida das referências');
+    notice('Esta imagem não será usada como referência para as próximas gerações.');
+}
+
 function attachFeedbackControls(messageId, mode) {
     if (messageId === undefined || messageId === null) return;
     const context = SillyTavern.getContext();
@@ -1448,9 +1469,22 @@ function attachFeedbackControls(messageId, mode) {
     if (messageElement.find('.rvl-feedback').length || $(`#rvl_feedback_${messageId}`).length) return;
 
     const feedback = $('<div>', { id: `rvl_feedback_${messageId}`, class: 'rvl-feedback' });
-    feedback.append($('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: fixar como referência de roupa e continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' }));
-    feedback.append($('<button>', { class: 'menu_button rvl-remove-ref', type: 'button', title: 'Remover referência desta imagem (não usar na próxima)', html: '<i class="fa-solid fa-ban"></i>' }));
-    feedback.append($('<button>', { class: 'menu_button rvl-dislike', type: 'button', title: 'Refazer esta imagem', html: '<i class="fa-solid fa-thumbs-down"></i>' }));
+    const likeBtn = $('<button>', { class: 'menu_button rvl-like', type: 'button', title: 'Gostei: fixar como referência de roupa e continuidade', html: '<i class="fa-solid fa-thumbs-up"></i>' });
+    const removeRefBtn = $('<button>', { class: 'menu_button rvl-remove-ref', type: 'button', title: 'Remover referência desta imagem (não usar na próxima)', html: '<i class="fa-solid fa-ban"></i>' });
+    const dislikeBtn = $('<button>', { class: 'menu_button rvl-dislike', type: 'button', title: 'Refazer esta imagem', html: '<i class="fa-solid fa-thumbs-down"></i>' });
+
+    if (chatMsg.extra?.[MODULE_NAME]?.excludedFromContinuity) {
+        removeRefBtn.addClass('rvl-excluded').attr('title', 'Imagem removida das referências');
+    }
+
+    const memory = getVisualMemory();
+    if (memory.lastApprovedImage?.url === chatMsg.extra?.[MODULE_NAME]?.imageUrl) {
+        likeBtn.addClass('rvl-approved').attr('title', 'Imagem aprovada para continuidade');
+    }
+
+    feedback.append(likeBtn);
+    feedback.append(removeRefBtn);
+    feedback.append(dislikeBtn);
     feedback.on('click', '.rvl-like', () => approveImage(messageId));
     feedback.on('click', '.rvl-remove-ref', () => removeImageFromContinuity(messageId));
     feedback.on('click', '.rvl-dislike', () => dislikeImage(messageId, mode));
@@ -1461,63 +1495,224 @@ function attachFeedbackControls(messageId, mode) {
 // MÓDULO CONTEXTUALIZADOR & MEMÓRIA LONGA
 // ==========================================
 
-const CONTEXT_INDICATOR_ID = 'rvl_contextualizer_indicator';
-
-function showMemoryIndicator(text = 'Consultando memória profunda do RP…') {
-    $(`#${CONTEXT_INDICATOR_ID}`).remove();
-    const ind = $('<div>', {
-        id: CONTEXT_INDICATOR_ID,
-        class: 'rvl-memory-indicator',
-        html: `<i class="fa-solid fa-brain fa-spin"></i> <span>${text}</span>`
-    });
-    $('#chat').append(ind);
-}
-
-function hideMemoryIndicator() {
-    $(`#${CONTEXT_INDICATOR_ID}`).remove();
-}
+const INJECTOR_KEY = 'rvl_memory_director';
+let isQueryingMemory = false;
+let currentMemoryAbortController = null;
+let isGenerating = false;
 
 /**
- * Consulta o Gemini no Proxy para extrair fatos de longa distância do histórico
+ * 2. Módulo de UI e Indicador (MemoryIndicatorUI)
+ * Overlay fixo em document.body, aria-live: polite, role: status, pointer-events: none
  */
-async function queryDeepMemory(userMessage, chatHistory) {
-    const s = settings();
-    if (!s.contextualizerEnabled) return null;
+const MemoryIndicatorUI = {
+    INDICATOR_ID: 'rvl_memory_indicator',
+    _hideTimeout: null,
 
-    // Se o chat ainda for curto, não há necessidade de recall distante
-    const threshold = Number(s.contextualizerThreshold) || defaults.contextualizerThreshold;
-    if (!chatHistory || chatHistory.length <= threshold) {
-        return null;
+    _ensure() {
+        let el = document.getElementById(this.INDICATOR_ID);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = this.INDICATOR_ID;
+            el.className = 'rvl-memory-indicator';
+            el.setAttribute('aria-live', 'polite');
+            el.setAttribute('role', 'status');
+            el.style.pointerEvents = 'none';
+            document.body.appendChild(el);
+        }
+        return el;
+    },
+
+    show(text = 'Consultando memória profunda do RP…') {
+        if (this._hideTimeout) {
+            clearTimeout(this._hideTimeout);
+            this._hideTimeout = null;
+        }
+        const el = this._ensure();
+        el.innerHTML = `<i class="fa-solid fa-brain fa-spin"></i> <span>${text}</span>`;
+        $(el).css('display', 'inline-flex').addClass('rvl-memory-visible');
+    },
+
+    hide() {
+        if (this._hideTimeout) {
+            clearTimeout(this._hideTimeout);
+            this._hideTimeout = null;
+        }
+        const el = document.getElementById(this.INDICATOR_ID);
+        if (el) {
+            $(el).removeClass('rvl-memory-visible');
+            this._hideTimeout = setTimeout(() => {
+                if (!$(el).hasClass('rvl-memory-visible')) {
+                    $(el).css('display', 'none');
+                }
+                this._hideTimeout = null;
+            }, 300);
+        }
+    },
+
+    flash(text, duration = 2000) {
+        this.show(text);
+        setTimeout(() => this.hide(), duration);
+    },
+
+    destroy() {
+        if (this._hideTimeout) {
+            clearTimeout(this._hideTimeout);
+            this._hideTimeout = null;
+        }
+        const el = document.getElementById(this.INDICATOR_ID);
+        if (el) {
+            el.remove();
+        }
     }
+};
 
-    const proxyUrl = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
-    const apiKey = apiKeyFor('proxy');
-    const model = s.contextualizerModel || defaults.contextualizerModel;
+/**
+ * 3. Módulo de Cache e Fingerprinting (memoryCache)
+ */
+function simpleHash(str) {
+    let hash = 5381;
+    const len = str.length;
+    for (let i = 0; i < len; i++) {
+        hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
+        hash |= 0;
+    }
+    return (hash >>> 0).toString(16);
+}
 
-    // Pega as mensagens anteriores (até o limite configurado)
-    const maxHistory = Math.max(20, Number(s.contextualizerHistoryLength) || defaults.contextualizerHistoryLength);
-    const relevantSlice = chatHistory.slice(-maxHistory);
+function computeContextFingerprint(chatHistory) {
+    if (!Array.isArray(chatHistory)) return 'empty';
+    const totalCount = chatHistory.length;
+    const validMessages = chatHistory.filter(m => m && !m.is_system && !m.extra?.[MODULE_NAME]);
 
-    // Formata o histórico do passado excluindo as últimas mensagens que o Claude já vê
-    const recentCount = 10;
-    const pastSlice = relevantSlice.slice(0, Math.max(0, relevantSlice.length - recentCount));
-    const recentSlice = relevantSlice.slice(-recentCount);
+    const userMessages = validMessages.filter(m => m.is_user);
+    const charMessages = validMessages.filter(m => !m.is_user);
 
-    if (pastSlice.length === 0) return null;
+    const last3User = userMessages.slice(-3).map(m => String(m.mes || '').trim()).join('||');
+    const last2Char = charMessages.slice(-2).map(m => String(m.mes || '').trim()).join('||');
 
-    const formattedPast = pastSlice.map((m, idx) => {
-        const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
-        const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
-        return `[Mensagem ${idx + 1}] ${sender}: ${text}`;
-    }).join('\n');
+    const uHash = simpleHash(last3User);
+    const cHash = simpleHash(last2Char);
 
-    const formattedRecent = recentSlice.map(m => {
-        const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
-        const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
-        return `${sender}: ${text}`;
-    }).join('\n');
+    return `${totalCount}:${uHash}:${cHash}`;
+}
 
-    const systemPrompt = `[INSTRUÇÃO DE SISTEMA: ARQUIVISTA DE MEMÓRIA & CONTINUIDADE]
+const memoryCache = {
+    _cache: new Map(),
+    TTL_MS: 30 * 60 * 1000, // 30 minutos
+    MAX_ENTRIES: 20,
+    DEBOUNCE_MS: 8000, // Mínimo de 8s entre chamadas ao Gemini
+    _lastCallTimestamp: 0,
+
+    getDebounceMs() {
+        const s = settings();
+        const debounceSec = Number(s.contextualizerDebounce);
+        if (!Number.isNaN(debounceSec) && debounceSec >= 3) {
+            return debounceSec * 1000;
+        }
+        return this.DEBOUNCE_MS;
+    },
+
+    canCallGemini() {
+        return (Date.now() - this._lastCallTimestamp) >= this.getDebounceMs();
+    },
+
+    get(fingerprint) {
+        if (!fingerprint || !this._cache.has(fingerprint)) {
+            return { hit: false, data: null };
+        }
+        const entry = this._cache.get(fingerprint);
+        if (Date.now() - entry.timestamp > this.TTL_MS) {
+            this._cache.delete(fingerprint);
+            return { hit: false, data: null };
+        }
+        return { hit: true, data: entry.data };
+    },
+
+    set(fingerprint, data) {
+        if (!fingerprint) return;
+        if (this._cache.size >= this.MAX_ENTRIES) {
+            const oldestKey = this._cache.keys().next().value;
+            this._cache.delete(oldestKey);
+        }
+        this._cache.set(fingerprint, {
+            data,
+            timestamp: Date.now(),
+        });
+    },
+
+    recordCall() {
+        this._lastCallTimestamp = Date.now();
+    },
+
+    clear() {
+        this._cache.clear();
+        this._lastCallTimestamp = 0;
+    },
+
+    stats() {
+        return {
+            size: this._cache.size,
+            max: this.MAX_ENTRIES,
+            ttlMinutes: this.TTL_MS / (60 * 1000),
+            debounceSeconds: this.getDebounceMs() / 1000,
+        };
+    }
+};
+
+/**
+ * 4. Extrator de Memória (GeminiExtractor)
+ */
+const GeminiExtractor = {
+    TIMEOUT_MS: 15000,
+
+    findLastUserMessage(chatHistory) {
+        if (!Array.isArray(chatHistory)) return '';
+        for (let i = chatHistory.length - 1; i >= 0; i--) {
+            const m = chatHistory[i];
+            if (m && m.is_user && !m.is_system && !m.extra?.[MODULE_NAME]) {
+                return String(m.mes || '').trim();
+            }
+        }
+        return '';
+    },
+
+    async extract(chatHistory, signal = null) {
+        const s = settings();
+        if (!s.contextualizerEnabled) return null;
+
+        const threshold = Number(s.contextualizerThreshold) || defaults.contextualizerThreshold;
+        if (!chatHistory || chatHistory.length <= threshold) {
+            return null;
+        }
+
+        const userMessage = this.findLastUserMessage(chatHistory);
+        if (!userMessage) return null;
+
+        const sanitizedHistory = chatHistory.filter(m => m && !m.is_system && !m.extra?.[MODULE_NAME]);
+        if (sanitizedHistory.length <= threshold) return null;
+
+        const maxHistory = Math.max(20, Number(s.contextualizerHistoryLength) || defaults.contextualizerHistoryLength);
+        const relevantSlice = sanitizedHistory.slice(-maxHistory);
+
+        const recentCount = 10;
+        const pastSlice = relevantSlice.slice(0, Math.max(0, relevantSlice.length - recentCount));
+        const recentSlice = relevantSlice.slice(-recentCount);
+
+        if (pastSlice.length === 0) return null;
+
+        const formattedPast = pastSlice.map((m, idx) => {
+            const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
+            const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
+            return `[Mensagem ${idx + 1}] ${sender}: ${text}`;
+        }).join('\n');
+
+        const formattedRecent = recentSlice.map(m => {
+            const sender = m.is_user ? 'Usuário' : (m.name || 'Personagem');
+            const text = String(m.mes || '').replace(/<[^>]*>/g, '').trim();
+            return `${sender}: ${text}`;
+        }).join('\n');
+
+        const systemPrompt = `[INSTRUÇÃO DE SISTEMA: ARQUIVISTA DE MEMÓRIA & CONTINUIDADE]
 Você é o módulo de memória de longo prazo para um roleplay literário de alta complexidade.
 Sua única responsabilidade é analisar o histórico antigo da história e extrair fatos reais do passado necessários para responder à fala atual do usuário.
 
@@ -1536,7 +1731,7 @@ FORMATO DE RESPOSTA (se houver fatos relevantes):
 - Detalhes contextuais: <itens envolvidos, nomes, decisões tomadas>
 - Estado/Impacto atual: <como isso afeta a situação presente>`;
 
-    const userPrompt = `HISTÓRICO ANTIGO DA CONVERSA (MEMÓRIA PROFUNDA):
+        const userPrompt = `HISTÓRICO ANTIGO DA CONVERSA (MEMÓRIA PROFUNDA):
 ${formattedPast}
 
 SITUAÇÃO RECENTE (ÚLTIMAS MENSAGENS):
@@ -1547,53 +1742,67 @@ ${formattedRecent}
 
 Avalie se há necessidade de recall do passado antigo:`;
 
-    try {
-        showMemoryIndicator();
-        const res = await fetch(`${proxyUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ],
-                temperature: 0.1,
-                max_tokens: 600,
-            }),
-        });
+        const proxyUrl = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
+        const apiKey = apiKeyFor('proxy');
+        const model = s.contextualizerModel || defaults.contextualizerModel;
 
-        if (!res.ok) {
-            console.warn('[Contextualizer] Falha na consulta de memória:', res.statusText);
+        const controller = signal ? null : new AbortController();
+        const timeoutId = controller ? setTimeout(() => controller.abort(), this.TIMEOUT_MS) : null;
+
+        try {
+            const res = await fetch(`${proxyUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 600,
+                }),
+                signal: signal || controller?.signal,
+            });
+
+            if (!res.ok) {
+                console.warn(`[${MODULE_NAME}] Falha na consulta do extrator:`, res.statusText);
+                return null;
+            }
+
+            const data = await res.json();
+            const content = data.choices?.[0]?.message?.content?.trim();
+
+            if (!content || content.includes('[SEM_RECALL]')) {
+                return null;
+            }
+
+            return content;
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                console.warn(`[${MODULE_NAME}] Timeout de 15s ou cancelamento no GeminiExtractor. Continuando geração sem travar.`);
+            } else {
+                console.warn(`[${MODULE_NAME}] Erro ao consultar memória:`, err);
+            }
             return null;
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
-
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content?.trim();
-
-        if (!content || content.includes('[SEM_RECALL]')) {
-            return null;
-        }
-
-        return content;
-    } catch (err) {
-        console.warn('[Contextualizer] Erro ao consultar memória:', err);
-        return null;
-    } finally {
-        hideMemoryIndicator();
     }
-}
+};
 
 /**
- * Injeta a memória do passado de forma invisível no prompt que será enviado ao modelo principal
+ * 5. Injetor de Prompt (PromptInjector)
+ * Usa exclusivamente a API oficial do SillyTavern:
+ * context.setExtensionPrompt(INJECTOR_KEY, formattedBlock, 1, 4, false, 0);
+ * NUNCA modifica context.chat[].mes.
  */
-function injectMemoryPrompt(context, memoryText) {
-    if (!memoryText) return;
-
-    const formattedBlock = `\n\n[DIRETRIZ DE CONTINUIDADE - MEMÓRIA DE LONGO PRAZO RECUPERADA DO PASSADO]
+const PromptInjector = {
+    formatMemory(memoryText) {
+        return `\n\n[DIRETRIZ DE CONTINUIDADE - MEMÓRIA DE LONGO PRAZO RECUPERADA DO PASSADO]
 Os seguintes fatos verificados do passado desta história foram resgatados dos registros antigos e devem orientar organicamente sua interpretação e resposta:
 ${memoryText}
 
@@ -1601,65 +1810,111 @@ INSTRUÇÃO AO PERSONAGEM:
 - Use essas informações como memórias naturais do seu personagem.
 - Mantenha a profundidade psicológica, estilo narrativo e tom estabelecidos.
 - NÃO cite explicitamente "de acordo com meus registros" ou termos mecânicos; aja como alguém que genuinamente se lembra desses acontecimentos.\n`;
+    },
 
-    // 1. Tenta usar a API nativa de extensão de prompt do SillyTavern se disponível
-    if (typeof context.setExtensionPrompt === 'function') {
-        context.setExtensionPrompt(MODULE_NAME, formattedBlock, 0, false);
-        return;
-    }
+    inject(context, memoryText) {
+        if (!context || typeof context.setExtensionPrompt !== 'function' || !memoryText) return;
+        const formattedBlock = this.formatMemory(memoryText);
+        // position: 1 = IN_CHAT, depth: 4, scan_depth: false, role: 0 = SYSTEM
+        context.setExtensionPrompt(INJECTOR_KEY, formattedBlock, 1, 4, false, 0);
+    },
 
-    // 2. Se não houver método nativo de setExtensionPrompt, injeta temporariamente na última mensagem do usuário enviada para a API
-    if (Array.isArray(context.chat) && context.chat.length > 0) {
-        const lastMsg = context.chat[context.chat.length - 1];
-        if (lastMsg && lastMsg.is_user) {
-            lastMsg._rvl_original_mes = lastMsg.mes;
-            lastMsg.mes = `${lastMsg.mes}\n\n<!-- ${formattedBlock} -->`;
-        }
+    clean(context) {
+        if (!context || typeof context.setExtensionPrompt !== 'function') return;
+        context.setExtensionPrompt(INJECTOR_KEY, '', 1, 0, false, 0);
     }
-}
+};
 
 /**
- * Limpa qualquer resquício da injeção de memória após a geração
+ * 6. Orquestrador de Memória
  */
-function cleanMemoryPrompt(context) {
-    if (typeof context.setExtensionPrompt === 'function') {
-        context.setExtensionPrompt(MODULE_NAME, '', 0, false);
-    }
-    if (Array.isArray(context.chat)) {
-        for (let i = context.chat.length - 1; i >= Math.max(0, context.chat.length - 3); i--) {
-            const m = context.chat[i];
-            if (m && m._rvl_original_mes !== undefined) {
-                m.mes = m._rvl_original_mes;
-                delete m._rvl_original_mes;
-            }
-        }
-    }
-}
+async function orchestrateMemory() {
+    isGenerating = true;
+    if (isQueryingMemory) return;
 
-/**
- * Hook disparado antes da geração do SillyTavern
- */
-async function onBeforeGenerate() {
     const s = settings();
     if (!s.contextualizerEnabled) return;
 
     const context = SillyTavern.getContext();
     const chat = context.chat;
-    if (!chat || chat.length === 0) return;
+    if (!Array.isArray(chat) || chat.length === 0) return;
 
-    const lastMsg = chat[chat.length - 1];
-    const userText = lastMsg?.is_user ? String(lastMsg.mes || '').trim() : '';
+    const threshold = Number(s.contextualizerThreshold) || defaults.contextualizerThreshold;
+    if (chat.length <= threshold) return;
+
+    const userText = GeminiExtractor.findLastUserMessage(chat);
     if (!userText) return;
 
-    const memory = await queryDeepMemory(userText, chat);
-    if (memory) {
-        injectMemoryPrompt(context, memory);
+    const fingerprint = computeContextFingerprint(chat);
+
+    // 1. Consulta o cache
+    const cached = memoryCache.get(fingerprint);
+    if (cached.hit) {
+        if (cached.data) {
+            PromptInjector.inject(context, cached.data);
+            MemoryIndicatorUI.flash('Memória recuperada do cache', 1500);
+        } else {
+            PromptInjector.clean(context);
+        }
+        return;
+    }
+
+    // 2. Debounce temporal (mínimo de 8s entre chamadas ao Gemini)
+    if (!memoryCache.canCallGemini()) {
+        console.info(`[${MODULE_NAME}] Chamada do Gemini ignorada pelo debounce temporal (< 8s).`);
+        return;
+    }
+
+    isQueryingMemory = true;
+    memoryCache.recordCall();
+    MemoryIndicatorUI.show('Consultando memória profunda do RP…');
+
+    currentMemoryAbortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+        if (currentMemoryAbortController) {
+            currentMemoryAbortController.abort();
+        }
+    }, 15000);
+
+    try {
+        const memory = await GeminiExtractor.extract(chat, currentMemoryAbortController.signal);
+        if (!isGenerating) {
+            return;
+        }
+
+        memoryCache.set(fingerprint, memory);
+        updateMemoryCacheStatus();
+
+        if (memory) {
+            PromptInjector.inject(context, memory);
+            MemoryIndicatorUI.flash('Memória de longo prazo injetada', 2000);
+        } else {
+            PromptInjector.clean(context);
+            MemoryIndicatorUI.hide();
+        }
+    } catch (err) {
+        console.warn(`[${MODULE_NAME}] Erro ao orquestrar memória:`, err);
+        PromptInjector.clean(context);
+        MemoryIndicatorUI.hide();
+    } finally {
+        clearTimeout(timeoutId);
+        currentMemoryAbortController = null;
+        isQueryingMemory = false;
+        setTimeout(() => {
+            if (!isQueryingMemory && !isGenerating) MemoryIndicatorUI.hide();
+        }, 1500);
     }
 }
 
 function onGenerationFinished() {
+    isGenerating = false;
+    if (currentMemoryAbortController) {
+        currentMemoryAbortController.abort();
+        currentMemoryAbortController = null;
+    }
     const context = SillyTavern.getContext();
-    cleanMemoryPrompt(context);
+    PromptInjector.clean(context);
+    MemoryIndicatorUI.hide();
 }
 
 function restoreFeedbackControls() {
@@ -1878,6 +2133,15 @@ function syncUi() {
     $('#rvl_contextualizer_model').val(s.contextualizerModel || defaults.contextualizerModel);
     $('#rvl_contextualizer_history').val(s.contextualizerHistoryLength || defaults.contextualizerHistoryLength);
     $('#rvl_contextualizer_threshold').val(s.contextualizerThreshold || defaults.contextualizerThreshold);
+    $('#rvl_contextualizer_debounce').val(s.contextualizerDebounce || defaults.contextualizerDebounce);
+    updateMemoryCacheStatus();
+}
+
+function updateMemoryCacheStatus() {
+    const stats = memoryCache.stats();
+    if ($('#rvl_memory_cache_status').length) {
+        $('#rvl_memory_cache_status').text(`Cache: ${stats.size} ${stats.size === 1 ? 'memória armazenada' : 'memórias armazenadas'}`);
+    }
 }
 
 async function init() {
@@ -1926,11 +2190,17 @@ async function init() {
         notice('Memória de roupa e cena anterior foi limpa com sucesso. A próxima imagem usará somente o avatar original.');
     });
 
+    $('#rvl_clear_memory_cache').on('click', function () {
+        memoryCache.clear();
+        updateMemoryCacheStatus();
+        notice('Cache de memória profunda foi limpo.');
+    });
+
     $('#rvl_remember_key').on('change', function () {
         if (!this.checked) forgetPersistentKey($('#rvl_provider').val());
     });
 
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_include_attachments, #rvl_select_references, #rvl_chat_model').on('change', function () {
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_include_attachments, #rvl_select_references, #rvl_chat_model, #rvl_contextualizer_enabled, #rvl_contextualizer_model, #rvl_contextualizer_history, #rvl_contextualizer_threshold, #rvl_contextualizer_debounce').on('change', function () {
         const s = settings();
         const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
@@ -1946,16 +2216,27 @@ async function init() {
         else if (this.id === 'rvl_contextualizer_model') s.contextualizerModel = this.value;
         else if (this.id === 'rvl_contextualizer_history') s.contextualizerHistoryLength = Math.max(20, Math.min(1000, Number(this.value) || defaults.contextualizerHistoryLength));
         else if (this.id === 'rvl_contextualizer_threshold') s.contextualizerThreshold = Math.max(5, Math.min(50, Number(this.value) || defaults.contextualizerThreshold));
+        else if (this.id === 'rvl_contextualizer_debounce') s.contextualizerDebounce = Math.max(3, Math.min(30, Number(this.value) || defaults.contextualizerDebounce));
         context.saveSettingsDebounced();
     });
 
     // Eventos do Gerador / Interceptador de Memória do SillyTavern
     const ev = context.event_types;
-    if (ev.GENERATION_STARTED) {
-        context.eventSource.on(ev.GENERATION_STARTED, onBeforeGenerate);
-    }
     if (ev.GENERATE_BEFORE_COMBINE_PROMPTS) {
-        context.eventSource.on(ev.GENERATE_BEFORE_COMBINE_PROMPTS, onBeforeGenerate);
+        context.eventSource.on(ev.GENERATE_BEFORE_COMBINE_PROMPTS, orchestrateMemory);
+    } else if (ev.GENERATION_STARTED) {
+        context.eventSource.on(ev.GENERATION_STARTED, orchestrateMemory);
+    }
+
+    // Cleanup com garantias em eventos de conclusão, parada e renderização
+    if (ev.GENERATION_ENDED) {
+        context.eventSource.on(ev.GENERATION_ENDED, onGenerationFinished);
+    }
+    if (ev.GENERATION_STOPPED) {
+        context.eventSource.on(ev.GENERATION_STOPPED, () => {
+            if (currentMemoryAbortController) currentMemoryAbortController.abort();
+            onGenerationFinished();
+        });
     }
     if (ev.CHARACTER_MESSAGE_RENDERED) {
         context.eventSource.on(ev.CHARACTER_MESSAGE_RENDERED, onGenerationFinished);
@@ -1977,10 +2258,18 @@ async function init() {
     renderChatActions();
     restoreFeedbackControls();
 
-    context.eventSource.on(context.event_types.CHAT_CHANGED, () => setTimeout(() => {
-        renderChatActions();
-        restoreFeedbackControls();
-    }, 250));
+    // Invalidação de cache e destroy do indicador em CHAT_CHANGED
+    context.eventSource.on(context.event_types.CHAT_CHANGED, () => {
+        if (currentMemoryAbortController) currentMemoryAbortController.abort();
+        onGenerationFinished();
+        memoryCache.clear();
+        MemoryIndicatorUI.destroy();
+        updateMemoryCacheStatus();
+        setTimeout(() => {
+            renderChatActions();
+            restoreFeedbackControls();
+        }, 250);
+    });
 }
 
 SillyTavern.getContext().eventSource.on(SillyTavern.getContext().event_types.APP_READY, init);

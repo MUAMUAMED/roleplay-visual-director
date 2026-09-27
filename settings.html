@@ -198,6 +198,20 @@
           <label>Ativar a partir de (Mensagens no Chat)
             <input id="rvl_contextualizer_threshold" type="number" min="5" max="50" step="5" value="15" title="Só dispara o extrator quando a conversa passar deste tamanho">
           </label>
+
+          <label>Intervalo Mínimo entre Consultas (segundos)
+            <input id="rvl_contextualizer_debounce" type="number" 
+                   min="3" max="30" step="1" value="8" 
+                   title="Tempo mínimo entre chamadas ao Gemini para evitar rate-limiting">
+          </label>
+        </div>
+
+        <div class="rvl-contextualizer-status">
+          <span id="rvl_memory_cache_status" class="rvl-muted">Cache: 0 memórias armazenadas</span>
+          <button id="rvl_clear_memory_cache" class="menu_button" type="button" 
+                  title="Limpar cache de memória desta sessão">
+            <i class="fa-solid fa-broom"></i> Limpar cache
+          </button>
         </div>
       </div>
 
