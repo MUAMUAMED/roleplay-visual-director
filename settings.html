@@ -99,6 +99,7 @@
         <button id="rvl_scene" class="menu_button"><i class="fa-solid fa-image"></i> Criar cena</button>
         <button id="rvl_pov" class="menu_button"><i class="fa-solid fa-eye"></i> Criar POV do jogador</button>
         <button id="rvl_look" class="menu_button"><i class="fa-solid fa-shirt"></i> Visual e roupas</button>
+        <button id="rvl_spicy" class="menu_button rvl-btn-spicy"><i class="fa-solid fa-pepper-hot"></i> Modo Spicy</button>
       </div>
 
       <div id="rvl_status" aria-live="polite"></div>
@@ -129,6 +130,9 @@
               <option value="gpt-6-sol">GPT 6 Sol (OpenAI Mais Recente — Raciocínio & Código)</option>
               <option value="gpt-5.5">GPT 5.5 (OpenAI)</option>
               <option value="codex/gpt-6-astra">GPT 6 Astra (OpenAI Flagship)</option>
+              <option value="grok-4.5">xAI Grok 4.5 (Spicy / Roleplay Sem Filtros)</option>
+              <option value="grok-4.6">xAI Grok 4.6 (Raciocínio & Criatividade)</option>
+              <option value="grok-4.7">xAI Grok 4.7 (Flagship xAI)</option>
               <option value="gemini-pro-agent">Gemini Pro Agent</option>
               <option value="google1/gemini-3.8-flash-high">Google Conta 1 — Gemini 3.8 Flash</option>
               <option value="google2/gemini-3.8-flash-high">Google Conta 2 — Gemini 3.8 Flash</option>
@@ -146,6 +150,11 @@
             </button>
           </label>
         </div>
+
+        <label class="rvl-checkbox rvl-spicy-checkbox">
+          <input id="rvl_chat_spicy_toggle" type="checkbox" checked> Ativar modo Spicy no Chat (grok-4.5 com <code>spicy: true</code>)
+        </label>
+        <p class="rvl-muted">Quando ativo, envia a flag de desinibição criativa e sensualidade permitida da xAI para o Grok 4.5 durante as respostas da conversa.</p>
 
         <div id="rvl_chat_status" class="rvl-chat-status"></div>
 

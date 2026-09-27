@@ -14,6 +14,7 @@ const defaults = Object.freeze({
     proxyUrl: DEFAULT_PROXY_URL_EXTERNAL,
     proxyModel: 'gpt-image-2.5',
     proxyChatModel: 'gemini-3.8-flash-high',
+    proxyChatSpicy: true,
     openrouterModel: 'google/gemini-2.5-flash-image',
     googleModel: 'gemini-3.1-flash-image',
     novitaModel: 'sd_xl_base_1.0.safetensors',
@@ -34,6 +35,9 @@ const defaults = Object.freeze({
 
 const modelChoices = Object.freeze({
     proxy: [
+        ['grok-imagine-image-quality', 'xAI Grok Imagine Quality (Alta Fidelidade & Edits)'],
+        ['grok-imagine-image-2.0', 'xAI Grok Imagine 2.0 (Geração e Edits)'],
+        ['grok-imagine-image', 'xAI Grok Imagine (Padrão)'],
         ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente (com Referência Direta)'],
         ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)'],
         ['google1/gemini-3.1-flash-image', 'Google Conta 1 — Gemini 3.1 Flash Image'],
@@ -716,6 +720,7 @@ function promptReferenceSelection(candidates, mode) {
             scene: 'Foto da Cena',
             pov: 'Primeira Pessoa (POV)',
             look: 'Visual Atual',
+            spicy: 'Modo Spicy / Sensual',
         };
         const modeTitle = modeLabels[mode] || 'Imagem';
 
@@ -989,6 +994,9 @@ function buildPrompt(mode, references) {
         scene: `Create a cinematic third-person scene featuring ${charName} from the current roleplay moment.`,
         pov: `Create a true first-person POV roleplay image featuring ${charName}: the camera IS physically the adult male player's eyes, looking directly at ${charName} at eye level. ${charName} is the focal point of the shot, interacting directly toward the camera/player. The player is behind the camera and MUST NOT be drawn as a separate standing person.`,
         look: `Create a clear full-body character reference of ${charName} exactly as they currently appear. Make clothing, accessories, hairstyle, expression, posture, and visible condition easy to read. Use the player's point of view as if standing in front of them.`,
+        spicy: `Create an intimate, sensual, alluring, and emotionally charged roleplay scene featuring ${charName} directly immersed in the current narrative context.
+Focus on alluring posture, natural skin textures, expressive eyes, nuanced erotic tension, and intimate physical realism.
+Preserve the organic setting and mood of the current conversation without inventing generic artificial backgrounds.`,
     }[mode];
 
     const hasContinuityImage = references.some(reference => reference.continuity);
@@ -1018,6 +1026,19 @@ Look at the attached previous scene image. Unless the recent conversation explic
 The user has provided specific reference image(s). Carefully observe the outfit, clothing style, colors, pose, and visual context from the attached user image(s) and faithfully reproduce those clothing/pose elements for ${charName} in the generated image.\n`
         : '';
 
+    const spicyLockRule = mode === 'spicy'
+        ? `\nMANDATORY 100% IDENTITY & ANATOMICAL FIDELITY (ZERO TOLERANCE):
+- PRESERVE EXACTLY 100% of the reference subject's facial likeness, facial bone structure, jawline, haircut, bangs style, eye shape, eye color, skin tone, earrings, facial moles, and unique identity markers from Image 1.
+- Under NO circumstance change the character's recognizable facial identity, age, or ethnicity.
+- The face must be unequivocally and unmistakably the exact individual depicted in the reference image.
+
+AESTHETIC & RENDERING GUIDELINES:
+- Photorealistic diffusion rendering, 8k resolution, authentic skin micro-pores, natural subsurface scattering, soft ambient lighting reflecting the scene's real environment.
+- No airbrushed plastic skin, no CGI sheen, no distorted extra limbs or floating artifacts.
+- Believable fabric draping, authentic perspiration or moisture if implied by the scene context.
+- Maintain total continuity of place, environment, and props present in the ongoing narrative. Do not teleport to random tropical beaches or generic studios unless specified in the text.\n`
+        : '';
+
     return `CRITICAL INSTRUCTION:
 You are generating an image based directly on the attached visual reference images.
 ${referenceRoles}
@@ -1027,7 +1048,7 @@ ${modeInstruction}
 MANDATORY CHARACTER LOCK:
 - The character ${charName} in the generated image MUST match the visual identity, face structure, eye color, and hair style from the attached character reference image.
 - Do NOT replace ${charName} with a generic or random person. Maintain complete fidelity to the reference image.
-${continuityClothingRule}
+${spicyLockRule}${continuityClothingRule}
 ${attachmentRule}
 
 CAST COMPOSITION:
@@ -1091,7 +1112,7 @@ async function generateProxy(key, prompt, references) {
         }
         return { dataUrl: imageUrl };
     } else {
-        // Modelos GPT (gpt-image-2.5): Suporta envio direto da imagem como multipart/form-data via /images/edits!
+        // Modelos GPT (gpt-image-2.5) e xAI Grok (grok-imagine*): Envia multipart/form-data via /images/edits com referência, ou JSON via /images/generations
         const [width, height] = aspectSize(s.aspectRatio);
         const rawSize = `${width}x${height}`;
         const allowedSizes = new Set(['1024x1024', '1792x1024', '1024x1792', '1024x768', '768x1024']);
@@ -1129,7 +1150,7 @@ async function generateProxy(key, prompt, references) {
                 if (item.url) return { dataUrl: await novitaImageFromUrl(item.url) };
             } else {
                 console.warn(`[${MODULE_NAME}] /images/edits com form-data falhou:`, json);
-                throw new Error(json.error?.message || json.message || 'O modelo GPT recusou a imagem enviada.');
+                throw new Error(json.error?.message || json.message || 'O modelo recusou a imagem enviada.');
             }
         } else {
             // Sem imagem de referência disponível: gera direto via text-to-image
@@ -1146,13 +1167,13 @@ async function generateProxy(key, prompt, references) {
                 }),
             });
             const json = await response.json();
-            if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação de imagem GPT.');
+            if (!response.ok) throw new Error(json.error?.message || json.message || 'O Proxy recusou a solicitação de imagem.');
 
             const item = json.data?.[0];
-            if (!item) throw new Error('O Proxy não retornou dados de imagem do modelo GPT.');
+            if (!item) throw new Error('O Proxy não retornou dados de imagem do modelo.');
             if (item.b64_json) return { dataUrl: `data:image/png;base64,${item.b64_json}` };
             if (item.url) return { dataUrl: await novitaImageFromUrl(item.url) };
-            throw new Error('Nenhuma imagem legível na resposta do GPT.');
+            throw new Error('Nenhuma imagem legível na resposta do modelo.');
         }
     }
 }
@@ -1377,6 +1398,7 @@ function renderChatActions() {
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'scene', title: 'Criar Cena', html: '<i class="fa-solid fa-image"></i><span> Cena</span>' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'pov', title: 'Criar POV do Jogador', html: '<i class="fa-solid fa-eye"></i><span> POV</span>' }));
     toolbar.append($('<button>', { class: 'menu_button', type: 'button', 'data-rvl-mode': 'look', title: 'Visual e Roupas', html: '<i class="fa-solid fa-shirt"></i><span> Visual</span>' }));
+    toolbar.append($('<button>', { class: 'menu_button rvl-btn-spicy', type: 'button', 'data-rvl-mode': 'spicy', title: 'Criar Imagem Picante / Sensual', html: '<i class="fa-solid fa-pepper-hot"></i><span> Spicy</span>' }));
 
     // 1. Tenta anexar ao lado ou dentro da barra de Quick Reply (#qr--bar ou .qr--buttons)
     const qrBar = $('#qr--bar .qr--buttons').first().length ? $('#qr--bar .qr--buttons').first() : $('#qr--bar').first();
@@ -1403,7 +1425,7 @@ async function publishToChat(result, mode) {
     const extension = image.mimeType.split('/')[1] || 'png';
     const fileName = `roleplay_visual_${Date.now()}`;
     const url = await saveBase64AsFile(image.data, 'Roleplay Visual Director', fileName, extension);
-    const modeName = { scene: 'Cena', pov: 'POV do jogador', look: 'Visual e roupas' }[mode] || 'Imagem';
+    const modeName = { scene: 'Cena', pov: 'POV do jogador', look: 'Visual e roupas', spicy: 'Modo Spicy' }[mode] || 'Imagem';
     const message = {
         name: 'Roleplay Visual Director',
         is_user: false,
@@ -1934,6 +1956,9 @@ async function connectChatToProxy() {
     const key = $('#rvl_api_key').val().trim() || apiKeyFor('proxy');
     const model = $('#rvl_chat_model').val() || s.proxyChatModel || 'gemini-3.8-flash-high';
     s.proxyChatModel = model;
+    if ($('#rvl_chat_spicy_toggle').length) {
+        s.proxyChatSpicy = $('#rvl_chat_spicy_toggle').prop('checked');
+    }
 
     const statusEl = $('#rvl_chat_status');
     statusEl.removeClass('rvl-error rvl-success').text('Testando e configurando o SillyTavern…');
@@ -1984,6 +2009,24 @@ async function connectChatToProxy() {
             context.chatCompletionSettings.chat_completion_source = 'custom';
             context.chatCompletionSettings.custom_url = url;
             context.chatCompletionSettings.custom_model = model;
+
+            // Suporte a grok-4.5 com spicy: true
+            const isGrokSpicy = model.includes('grok-4.5') && Boolean(s.proxyChatSpicy);
+            if (isGrokSpicy) {
+                context.chatCompletionSettings.spicy = true;
+                try {
+                    let customBody = {};
+                    if (context.chatCompletionSettings.custom_include_body) {
+                        customBody = typeof context.chatCompletionSettings.custom_include_body === 'string'
+                            ? JSON.parse(context.chatCompletionSettings.custom_include_body || '{}')
+                            : (context.chatCompletionSettings.custom_include_body || {});
+                    }
+                    customBody.spicy = true;
+                    context.chatCompletionSettings.custom_include_body = JSON.stringify(customBody);
+                } catch {
+                    context.chatCompletionSettings.custom_include_body = JSON.stringify({ spicy: true });
+                }
+            }
         }
 
         // 7. Configurar campo e seletor de modelo
@@ -2008,7 +2051,8 @@ async function connectChatToProxy() {
         // 9. Persistir configurações
         context.saveSettingsDebounced?.();
 
-        statusEl.addClass('rvl-success').html(`✔ <b>Conectado com sucesso!</b> O SillyTavern foi configurado para o modelo <code>${model}</code> via nosso Proxy.`);
+        const spicyNotice = (model.includes('grok-4.5') && s.proxyChatSpicy) ? ' (Modo Spicy Ativado)' : '';
+        statusEl.addClass('rvl-success').html(`✔ <b>Conectado com sucesso!</b> O SillyTavern foi configurado para o modelo <code>${model}</code>${spicyNotice} via nosso Proxy.`);
     } catch (err) {
         console.error(`[${MODULE_NAME}] Falha ao conectar chat ao proxy:`, err);
         statusEl.addClass('rvl-error').text(`Erro: ${err.message || 'Falha ao conectar.'}`);
@@ -2129,6 +2173,7 @@ function syncUi() {
     $('#rvl_select_references').prop('checked', s.selectReferencesBeforeGenerate !== false);
     $('#rvl_remember_key').prop('checked', Boolean(persistentKeys()[provider]));
     $('#rvl_chat_model').val(s.proxyChatModel || 'gemini-3.8-flash-high');
+    $('#rvl_chat_spicy_toggle').prop('checked', s.proxyChatSpicy !== false);
     $('#rvl_contextualizer_enabled').prop('checked', Boolean(s.contextualizerEnabled));
     $('#rvl_contextualizer_model').val(s.contextualizerModel || defaults.contextualizerModel);
     $('#rvl_contextualizer_history').val(s.contextualizerHistoryLength || defaults.contextualizerHistoryLength);
@@ -2200,7 +2245,7 @@ async function init() {
         if (!this.checked) forgetPersistentKey($('#rvl_provider').val());
     });
 
-    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_include_attachments, #rvl_select_references, #rvl_chat_model, #rvl_contextualizer_enabled, #rvl_contextualizer_model, #rvl_contextualizer_history, #rvl_contextualizer_threshold, #rvl_contextualizer_debounce').on('change', function () {
+    $('#rvl_model, #rvl_aspect, #rvl_quality, #rvl_messages, #rvl_player_reference, #rvl_include_continuity, #rvl_include_attachments, #rvl_select_references, #rvl_chat_model, #rvl_chat_spicy_toggle, #rvl_contextualizer_enabled, #rvl_contextualizer_model, #rvl_contextualizer_history, #rvl_contextualizer_threshold, #rvl_contextualizer_debounce').on('change', function () {
         const s = settings();
         const provider = $('#rvl_provider').val();
         if (this.id === 'rvl_model') s[modelSettingKey(provider)] = this.value.trim();
@@ -2211,12 +2256,19 @@ async function init() {
         else if (this.id === 'rvl_include_attachments') s.includeChatAttachments = this.checked;
         else if (this.id === 'rvl_select_references') s.selectReferencesBeforeGenerate = this.checked;
         else if (this.id === 'rvl_chat_model') s.proxyChatModel = this.value;
+        else if (this.id === 'rvl_chat_spicy_toggle') s.proxyChatSpicy = this.checked;
         else if (this.id === 'rvl_messages') s.messages = Math.max(1, Math.min(30, Number(this.value) || defaults.messages));
         else if (this.id === 'rvl_contextualizer_enabled') s.contextualizerEnabled = this.checked;
         else if (this.id === 'rvl_contextualizer_model') s.contextualizerModel = this.value;
         else if (this.id === 'rvl_contextualizer_history') s.contextualizerHistoryLength = Math.max(20, Math.min(1000, Number(this.value) || defaults.contextualizerHistoryLength));
         else if (this.id === 'rvl_contextualizer_threshold') s.contextualizerThreshold = Math.max(5, Math.min(50, Number(this.value) || defaults.contextualizerThreshold));
         else if (this.id === 'rvl_contextualizer_debounce') s.contextualizerDebounce = Math.max(3, Math.min(30, Number(this.value) || defaults.contextualizerDebounce));
+        context.saveSettingsDebounced();
+    });
+
+    $('#rvl_chat_spicy_toggle').on('change', function () {
+        const s = settings();
+        s.proxyChatSpicy = this.checked;
         context.saveSettingsDebounced();
     });
 
@@ -2248,6 +2300,7 @@ async function init() {
     $('#rvl_scene').on('click', () => run('scene'));
     $('#rvl_pov').on('click', () => run('pov'));
     $('#rvl_look').on('click', () => run('look'));
+    $('#rvl_spicy').on('click', () => run('spicy'));
 
     if ($('#rvl_provider').val() === 'proxy' || defaults.provider === 'proxy') {
         refreshProxyCatalog().catch(() => {});

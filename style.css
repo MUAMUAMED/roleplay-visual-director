@@ -478,3 +478,26 @@
     transform: translateY(0);
   }
 }
+
+.rvl-chat-actions button[data-rvl-mode="spicy"],
+.rvl-btn-spicy,
+#rvl_spicy {
+  color: #ff6b81 !important;
+  border-color: rgba(255, 107, 129, 0.45) !important;
+  background: linear-gradient(135deg, rgba(255, 107, 129, 0.1) 0%, rgba(200, 30, 80, 0.15) 100%) !important;
+}
+.rvl-chat-actions button[data-rvl-mode="spicy"]:hover,
+.rvl-btn-spicy:hover,
+#rvl_spicy:hover {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #ff4757 0%, #c0392b 100%) !important;
+  border-color: #ff4757 !important;
+  box-shadow: 0 0 12px rgba(255, 71, 87, 0.45) !important;
+}
+.rvl-spicy-checkbox {
+  background: rgba(255, 71, 87, 0.08);
+  border: 1px solid rgba(255, 71, 87, 0.25);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-top: 8px;
+}
