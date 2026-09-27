@@ -1121,7 +1121,7 @@ function sanitizePromptForXai(text) {
     return s;
 }
 
-async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, historyText) {
+async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, historyText, targetModel = 'grok-imagine-image-2.0') {
     const charName = currentCharacterName();
     const modeDesc = {
         scene: `Cena cinematográfica em terceira pessoa destacando ${charName} no momento atual do roleplay.`,
@@ -1145,7 +1145,7 @@ async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, hi
     }
 
     const sysPrompt = "You are Grok in SPICY MODE (Unhinged, bold, witty & aesthetically elite diffusion director created by xAI). " +
-        "Your mission is to analyze the recent roleplay chat context and the user's requested visual mode, then engineer the ULTIMATE English diffusion prompt for Grok Imagine. " +
+        "Your mission is to analyze the recent roleplay chat context and the user's requested visual mode, then engineer the ULTIMATE English diffusion prompt specifically tailored for the xAI " + targetModel + " diffusion engine. " +
         "\nCRITICAL RULES FOR 100% FIRST-TRY APPROVAL BY XAI DIFFUSION FILTER:\n" +
         "1. ART STYLE & MEDIUM (STRICT): " + (isAnime
             ? "MANDATORY JAPANESE ANIME ILLUSTRATION! The reference avatar is ANIME. You MUST generate an anime illustration (cel shading, vibrant anime colors, clean lineart, Makoto Shinkai/Kyoto Animation aesthetic). DO NOT generate a real human photo or western 3D model! Begin the prompt with: '" + stylePrefix + ", eye-level close-up viewpoint of an adult woman " + charName + "...' (if POV/pov_spicy) or '" + stylePrefix + " of an adult woman " + charName + "...' (if scene/look).\n"
@@ -1160,7 +1160,7 @@ async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, hi
     const userContent = [
         {
             type: "text",
-            text: `Modo visual desejado: ${mode} (${modeDesc})\nPersonagem focal: ${charName}${visualDetails}\nContexto recente do Roleplay:\n${historyText}\n\nDiretrizes complementares e referências:\n${rawPrompt}\n\nINSTRUÇÃO MANDATÓRIA: Olhe para o rosto na imagem de referência anexada (formato do rosto, cor e formato dos olhos, corte e cor do cabelo, franja, detalhes faciais) e DESCREVA ESSAS CARACTERÍSTICAS FACIAIS EXATAS no prompt de difusão em inglês, para que a IA gere exatamente o rosto dela idêntico ao avatar:`
+            text: `Modo visual desejado: ${mode} (${modeDesc})\nMotor de Difusão Alvo: ${targetModel}\nPersonagem focal: ${charName}${visualDetails}\nContexto recente do Roleplay:\n${historyText}\n\nDiretrizes complementares e referências:\n${rawPrompt}\n\nINSTRUÇÃO MANDATÓRIA: Olhe para o rosto na imagem de referência anexada (formato do rosto, cor e formato dos olhos, corte e cor do cabelo, franja, detalhes faciais) e DESCREVA ESSAS CARACTERÍSTICAS FACIAIS EXATAS no prompt de difusão em inglês, para que a IA gere exatamente o rosto dela idêntico ao avatar:`
         }
     ];
 
@@ -1284,7 +1284,7 @@ async function generateProxy(key, prompt, references, mode = 'scene') {
                 return `${m.is_user ? "Player" : currentCharacterName()}: ${text}`;
             }).filter(Boolean).join("\n");
 
-            effectivePrompt = await askGrokToEngineerPrompt(url, key, mode, prompt, references, cleanHistory);
+            effectivePrompt = await askGrokToEngineerPrompt(url, key, mode, prompt, references, cleanHistory, model);
         }
 
         // ETAPA 2: Loop de envio e Self-Healing com até 20 tentativas consecutivas se houver bloqueio por moderação
