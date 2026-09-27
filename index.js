@@ -1192,6 +1192,7 @@ async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, hi
             body: JSON.stringify({
                 model: 'grok-4.5',
                 temperature: 0.7,
+                max_tokens: 180,
                 messages,
             }),
         });
@@ -1376,6 +1377,7 @@ async function generateProxy(key, prompt, references, mode = 'scene') {
                         body: JSON.stringify({
                             model: "grok-4.5",
                             temperature: 0.75,
+                            max_tokens: 180,
                             messages: [
                                 {
                                     role: "system",
