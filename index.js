@@ -12,7 +12,7 @@ const DEFAULT_PROXY_KEY = 'sk-antigravity21-secure-key';
 const defaults = Object.freeze({
     provider: 'proxy',
     proxyUrl: DEFAULT_PROXY_URL_EXTERNAL,
-    proxyModel: 'gpt-image-2.5',
+    proxyModel: 'grok-imagine-image-2.0',
     proxyChatModel: 'gemini-3.8-flash-high',
     proxyChatSpicy: true,
     openrouterModel: 'google/gemini-2.5-flash-image',
@@ -36,8 +36,8 @@ const defaults = Object.freeze({
 
 const modelChoices = Object.freeze({
     proxy: [
+        ['grok-imagine-image-2.0', 'xAI Grok Imagine 2.0 (Geração e Edits — Recomendado)'],
         ['grok-imagine-image-quality', 'xAI Grok Imagine Quality (Alta Fidelidade & Edits)'],
-        ['grok-imagine-image-2.0', 'xAI Grok Imagine 2.0 (Geração e Edits)'],
         ['grok-imagine-image', 'xAI Grok Imagine (Padrão)'],
         ['gpt-image-2.5', 'GPT Image 2.5 — OpenAI Mais Potente (com Referência Direta)'],
         ['gemini-3.1-flash-image', 'Google Gemini — Pool Automático (7 Contas, Visão Nativa)'],
@@ -1214,7 +1214,7 @@ async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, hi
 async function generateProxy(key, prompt, references, mode = 'scene') {
     const s = settings();
     const url = (s.proxyUrl || DEFAULT_PROXY_URL_EXTERNAL).replace(/\/+$/, '');
-    const model = s.proxyModel || 'gpt-image-2.5';
+    const model = s.proxyModel || defaults.proxyModel || 'grok-imagine-image-2.0';
     const isGemini = model.includes('gemini') || model.startsWith('google');
 
     if (isGemini) {
