@@ -1137,23 +1137,30 @@ async function askGrokToEngineerPrompt(url, key, mode, rawPrompt, references, hi
         ? 'High quality Japanese anime illustration, Makoto Shinkai / Kyoto Animation aesthetic, detailed anime cel shading, expressive anime eyes'
         : 'Editorial photograph, photorealistic 8k, natural skin textures';
 
+    // Extrai a descrição visual detalhada do avatar ou anexo
+    let visualDetails = '';
+    const charRef = references.find(r => r.role === 'character') || references[0];
+    if (charRef?.charDescription) {
+        visualDetails = `\nCHARACTER OFFICIAL VISUAL DESCRIPTION (MUST MATCH 100%):\n${String(charRef.charDescription).slice(0, 400).trim()}\n`;
+    }
+
     const sysPrompt = "You are Grok in SPICY MODE (Unhinged, bold, witty & aesthetically elite diffusion director created by xAI). " +
         "Your mission is to analyze the recent roleplay chat context and the user's requested visual mode, then engineer the ULTIMATE English diffusion prompt for Grok Imagine. " +
         "\nCRITICAL RULES FOR 100% FIRST-TRY APPROVAL BY XAI DIFFUSION FILTER:\n" +
         "1. ART STYLE & MEDIUM (STRICT): " + (isAnime
             ? "MANDATORY JAPANESE ANIME ILLUSTRATION! The reference avatar is ANIME. You MUST generate an anime illustration (cel shading, vibrant anime colors, clean lineart, Makoto Shinkai/Kyoto Animation aesthetic). DO NOT generate a real human photo or western 3D model! Begin the prompt with: '" + stylePrefix + ", eye-level close-up viewpoint of an adult woman " + charName + "...' (if POV/pov_spicy) or '" + stylePrefix + " of an adult woman " + charName + "...' (if scene/look).\n"
             : "Begin the prompt with: 'Editorial photograph, eye-level close-up viewpoint of an adult woman " + charName + "...' (if POV/pov_spicy) or 'Editorial photograph of an adult woman " + charName + "...' (if scene/look).\n") +
-        "2. AGE SAFETY COMPLIANCE: ALWAYS refer to " + charName + " as an 'adult woman' or 'lady'. NEVER use the word 'girl'.\n" +
-        "3. DYNAMIC CLOTHING & SCENE FIDELITY: If the roleplay action describes " + charName + " taking off clothes, undressing, changing into sleepwear/bikini/lingerie, opening her shirt, or being partially disrobed, you MUST faithfully portray that exact new state of dress or undress! Describe intimate or sleep garments as 'delicate silk loungewear', 'flowing satin loungewear', 'delicate lace-trimmed silk loungewear', or 'tasteful satin attire'. NEVER use forbidden trigger words like 'lingerie', 'nightwear', 'underwear', 'panties', 'bra', 'sheer', 'nude', 'naked'. If no clothing change was described in the recent action, do NOT randomly invent a completely different unrelated outfit—keep her wearing what she is already wearing in the scene.\n" +
-        "4. POV & BED POSITION: Describe her as 'resting gracefully on a bed in a softly lit [room/chamber]', gazing directly toward the camera with a 'captivating gaze'. NEVER use 'lying on a bed', 'erotic', 'sensual', 'alluring', or 'first-person POV'.\n" +
-        "5. FACIAL & IDENTITY FIDELITY (100% LOCK): You MUST command the model to preserve 100% of the reference subject's facial likeness, facial bone structure, jawline, haircut, bangs style, eye shape, eye color, skin tone, earrings, facial moles and unique identity markers from the reference image.\n" +
+        "2. FACIAL & IDENTITY FIDELITY (100% STRICT LOCK): Look at the attached image(s) and carefully extract her EXACT facial features: hair color, hair length, bangs style, eye color, eye shape, face shape, expressions, horns/ears/pintas/accessories. Explicitly describe these exact features in the prompt so the diffusion model draws her EXACT face and head, NOT a random face! The character's face MUST be 100% identical and instantly recognizable as the character in the reference avatar image.\n" +
+        "3. AGE SAFETY COMPLIANCE: ALWAYS refer to " + charName + " as an 'adult woman' or 'lady'. NEVER use the word 'girl'.\n" +
+        "4. DYNAMIC CLOTHING & SCENE FIDELITY: If the roleplay action describes " + charName + " taking off clothes, undressing, changing into sleepwear/bikini/lingerie, opening her shirt, or being partially disrobed, you MUST faithfully portray that exact new state of dress or undress! Describe intimate or sleep garments as 'delicate silk loungewear', 'flowing satin loungewear', 'delicate lace-trimmed silk loungewear', or 'tasteful satin attire'. NEVER use forbidden trigger words like 'lingerie', 'nightwear', 'underwear', 'panties', 'bra', 'sheer', 'nude', 'naked'. If no clothing change was described in the recent action, do NOT randomly invent a completely different unrelated outfit—keep her wearing what she is already wearing in the scene.\n" +
+        "5. POV & BED POSITION: Describe her as 'resting gracefully on a bed in a softly lit [room/chamber]', gazing directly toward the camera with a 'captivating gaze'. NEVER use 'lying on a bed', 'erotic', 'sensual', 'alluring', or 'first-person POV'.\n" +
         "6. STRICT SCENARIO & CONTEXT: NEVER invent random or generic backgrounds (do NOT add a tropical beach, ocean, random forest or generic hotel room unless the chat specifically takes place there!). Look at the roleplay chat and deduce the exact room, lighting, time of day, and atmosphere where the characters actually are.\n" +
         "7. Respond ONLY with the prompt in plain text in English. Do NOT wrap in quotes, do NOT add conversational chat filler.";
 
     const userContent = [
         {
             type: "text",
-            text: `Modo visual desejado: ${mode} (${modeDesc})\nPersonagem focal: ${charName}\n\nContexto recente do Roleplay:\n${historyText}\n\nDiretrizes complementares e referências:\n${rawPrompt}\n\nObserve com atenção os detalhes visuais das imagens de referência anexadas (rosto do avatar, corte de cabelo, roupas ou fotos anexadas no chat) e crie o prompt de difusão final em inglês perfeitamente adaptado e seguro para o Grok Imagine, preservando a identidade, pose e roupas observadas:`
+            text: `Modo visual desejado: ${mode} (${modeDesc})\nPersonagem focal: ${charName}${visualDetails}\nContexto recente do Roleplay:\n${historyText}\n\nDiretrizes complementares e referências:\n${rawPrompt}\n\nINSTRUÇÃO MANDATÓRIA: Olhe para o rosto na imagem de referência anexada (formato do rosto, cor e formato dos olhos, corte e cor do cabelo, franja, detalhes faciais) e DESCREVA ESSAS CARACTERÍSTICAS FACIAIS EXATAS no prompt de difusão em inglês, para que a IA gere exatamente o rosto dela idêntico ao avatar:`
         }
     ];
 
@@ -1292,14 +1299,21 @@ async function generateProxy(key, prompt, references, mode = 'scene') {
             let json;
 
             if (validImageRefs.length > 0) {
+                // Ordena referências para garantir que o avatar do personagem principal seja sempre o PRIMEIRO arquivo enviado ('image')
+                const sortedRefs = validImageRefs.slice().sort((a, b) => {
+                    if (a.role === 'character' && b.role !== 'character') return -1;
+                    if (b.role === 'character' && a.role !== 'character') return 1;
+                    return 0;
+                });
+
                 // Envia a imagem do avatar como arquivo binário multipart/form-data (/images/edits)
                 const formData = new FormData();
                 formData.append("model", model);
                 formData.append("prompt", sanitizePromptForXai(effectivePrompt));
                 formData.append("size", size);
 
-                for (let i = 0; i < validImageRefs.length; i++) {
-                    const ref = validImageRefs[i];
+                for (let i = 0; i < sortedRefs.length; i++) {
+                    const ref = sortedRefs[i];
                     const blob = dataUrlToBlob(ref.dataUrl);
                     formData.append("image", blob, `${ref.role || "ref"}_${i}.png`);
                 }
