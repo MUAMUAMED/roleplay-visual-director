@@ -513,3 +513,102 @@
   border-radius: 6px;
   margin-top: 8px;
 }
+
+/* Escritor de Prompt & Estúdio Manual */
+.rvl-prompt-writer-box {
+  border-left: 4px solid #06b6d4 !important;
+  background: rgba(6, 182, 212, 0.05);
+}
+.rvl-prompt-writer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.rvl-pw-result-box {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  border-radius: 8px;
+  padding: 12px;
+  animation: rvlFadeIn 0.2s ease-out;
+}
+.rvl-pw-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.rvl-pw-result-title {
+  color: #38bdf8;
+  font-size: 0.95em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rvl-pw-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #090d16;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 80px;
+}
+.rvl-pw-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.rvl-pw-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.rvl-pw-card-thumb {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  background: #020617;
+  cursor: pointer;
+}
+.rvl-pw-card-info {
+  padding: 6px;
+  font-size: 0.75em;
+  color: #cbd5e1;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  border-bottom: 1px solid #1e293b;
+}
+.rvl-pw-card-actions {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+  justify-content: space-between;
+  background: #020617;
+}
+.rvl-pw-card-btn {
+  padding: 3px 6px !important;
+  font-size: 0.75em !important;
+  min-width: 0 !important;
+  flex: 1;
+  text-align: center;
+}
+.rvl-primary-btn {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+  color: #ffffff !important;
+  border-color: #38bdf8 !important;
+}
+.rvl-primary-btn:hover {
+  background: linear-gradient(135deg, #0369a1 0%, #075985 100%) !important;
+}

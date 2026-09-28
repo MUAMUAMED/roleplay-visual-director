@@ -233,6 +233,62 @@
         </div>
       </div>
 
+      <!-- SEÇÃO DO ESCRITOR DE PROMPT & ESTÚDIO MANUAL -->
+      <div class="rvl-divider"></div>
+      <div class="rvl-chat-box rvl-prompt-writer-box">
+        <div class="rvl-chat-header">
+          <i class="fa-solid fa-pen-nib"></i>
+          <b>Escritor de Prompt &amp; Estúdio Manual</b>
+        </div>
+        <p class="rvl-muted">
+          Analisa a cena atual do roleplay e as imagens de referência com IA para estruturar o <b>prompt de difusão ideal em inglês</b>. Você pode copiar o prompt para usar no Midjourney, Flux, NovelAI ou Grok Web, e baixar ou copiar as imagens de referência para anexar na plataforma externa.
+        </p>
+
+        <div class="rvl-grid">
+          <label>IA para Estruturar o Prompt
+            <select id="rvl_prompt_writer_model">
+              <option value="roleplay" selected>Usar o Modelo Atual do Roleplay (Recomendado)</option>
+              <option value="gemini-3.8-flash-high">Google Gemini 3.8 Flash (Ultra Rápido com Visão)</option>
+              <option value="grok-4.5">xAI Grok 4.5 (Spicy / Desinibido)</option>
+              <option value="claude-sonnet-4-6">Claude 4.6 Sonnet (Rico em Detalhes Literários)</option>
+              <option value="gpt-6-sol">GPT 6 Sol (Raciocínio &amp; Estética)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="rvl-actions rvl-prompt-writer-actions">
+          <button id="rvl_pw_scene" class="menu_button" type="button" title="Escrever prompt de Cena em 3ª pessoa"><i class="fa-solid fa-image"></i> Escrever Cena</button>
+          <button id="rvl_pw_pov" class="menu_button" type="button" title="Escrever prompt de POV em 1ª pessoa"><i class="fa-solid fa-eye"></i> Escrever POV</button>
+          <button id="rvl_pw_look" class="menu_button" type="button" title="Escrever prompt de Visual e Roupas"><i class="fa-solid fa-shirt"></i> Escrever Visual</button>
+          <button id="rvl_pw_spicy" class="menu_button rvl-btn-spicy" type="button" title="Escrever prompt Spicy"><i class="fa-solid fa-pepper-hot"></i> Escrever Spicy</button>
+          <button id="rvl_pw_pov_spicy" class="menu_button rvl-btn-pov-spicy" type="button" title="Escrever prompt POV Spicy"><i class="fa-solid fa-fire-flame-curved"></i> Escrever POV Spicy</button>
+        </div>
+
+        <div id="rvl_prompt_writer_status" class="rvl-status" style="margin-top:8px;"></div>
+
+        <!-- Painel de Exibição do Prompt Gerado Manualmente -->
+        <div id="rvl_prompt_writer_result" class="rvl-pw-result-box" style="display:none; margin-top:14px;">
+          <div class="rvl-pw-result-header">
+            <span class="rvl-pw-result-title"><i class="fa-solid fa-wand-magic-sparkles"></i> <b>Prompt em Inglês Gerado:</b></span>
+            <button id="rvl_pw_copy_btn" class="menu_button" type="button" title="Copiar prompt em inglês"><i class="fa-solid fa-copy"></i> Copiar Prompt</button>
+          </div>
+          <textarea id="rvl_pw_text_area" class="rvl-pw-textarea" rows="4" readonly></textarea>
+
+          <!-- Galeria de Imagens de Referência Usadas -->
+          <div class="rvl-pw-refs-title" style="margin-top:12px; margin-bottom:6px; font-weight:600; font-size:0.9em; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-images"></i> <span>Imagens de Referência Usadas (baixe ou copie para anexar na sua plataforma):</span>
+          </div>
+          <div id="rvl_pw_thumbs_gallery" class="rvl-pw-gallery"></div>
+
+          <!-- Ação Opcional: Gerar Direto no SillyTavern -->
+          <div style="margin-top:14px; display:flex; justify-content:flex-end;">
+            <button id="rvl_pw_generate_direct_btn" class="menu_button rvl-primary-btn" type="button">
+              <i class="fa-solid fa-play"></i> Gerar Imagem com este Prompt no SillyTavern
+            </button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
