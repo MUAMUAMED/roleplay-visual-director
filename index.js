@@ -2799,14 +2799,14 @@ async function init() {
             renderChatActions();
             restoreFeedbackControls();
         }, 250);
-    } catch (globalInitErr) {
-        console.error(`[${MODULE_NAME}] Erro crítico na inicialização da extensão:`, globalInitErr);
-        // Garante que mesmo com erro no template de settings, a barra de chat seja montada
-        try {
-            renderChatActions();
-            restoreFeedbackControls();
-        } catch {}
-    }
+    });
+} catch (globalInitErr) {
+    console.error(`[${MODULE_NAME}] Erro na inicialização da extensão:`, globalInitErr);
+    try {
+        renderChatActions();
+        restoreFeedbackControls();
+    } catch {}
+}
 }
 
 // Inicializa quando APP_READY disparar, ou imediatamente se o SillyTavern já estiver pronto
