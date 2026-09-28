@@ -2619,11 +2619,37 @@ function updateMemoryCacheStatus() {
 }
 
 async function init() {
-    const context = SillyTavern.getContext();
-    settings();
-    const html = await context.renderExtensionTemplateAsync('third-party/roleplay-visual-director', 'settings');
-    $('#extensions_settings2').append(html);
-    syncUi();
+    try {
+        const context = SillyTavern.getContext();
+        settings();
+        
+        let html = '';
+        try {
+            html = await context.renderExtensionTemplateAsync('third-party/roleplay-visual-director', 'settings');
+        } catch (e1) {
+            try {
+                html = await context.renderExtensionTemplateAsync('roleplay-visual-director', 'settings');
+            } catch (e2) {
+                console.warn(`[${MODULE_NAME}] Template render error:`, e1, e2);
+            }
+        }
+        
+        if (html) {
+            $('#extensions_settings2').append(html);
+        } else if (!$('#roleplay_visual_director').length) {
+            // Fallback se renderExtensionTemplateAsync falhar por caminho relativo do ST
+            try {
+                const rawRes = await fetch('/scripts/extensions/third-party/roleplay-visual-director/settings.html');
+                if (rawRes.ok) {
+                    const fallbackHtml = await rawRes.text();
+                    $('#extensions_settings2').append(fallbackHtml);
+                }
+            } catch (fetchErr) {
+                console.warn(`[${MODULE_NAME}] Fallback fetch settings error:`, fetchErr);
+            }
+        }
+
+        syncUi();
 
     $('#rvl_provider').on('change', function () {
         const s = settings();
@@ -2773,7 +2799,18 @@ async function init() {
             renderChatActions();
             restoreFeedbackControls();
         }, 250);
-    });
+    } catch (globalInitErr) {
+        console.error(`[${MODULE_NAME}] Erro crítico na inicialização da extensão:`, globalInitErr);
+        // Garante que mesmo com erro no template de settings, a barra de chat seja montada
+        try {
+            renderChatActions();
+            restoreFeedbackControls();
+        } catch {}
+    }
 }
 
+// Inicializa quando APP_READY disparar, ou imediatamente se o SillyTavern já estiver pronto
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(init, 500);
+}
 SillyTavern.getContext().eventSource.on(SillyTavern.getContext().event_types.APP_READY, init);
