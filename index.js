@@ -595,6 +595,34 @@ async function collectAllCandidates() {
         }
     }
 
+    // Se houver outros personagens na lista do SillyTavern, carrega seus avatares como candidatos adicionais
+    if (allCharacters.length > 1) {
+        for (const character of allCharacters) {
+            if (candidates.some(c => c.id === `char_${character.name || character.avatar}`)) continue;
+            let charUrl = character.avatar ? `/characters/${encodeURIComponent(character.avatar)}` : '';
+            if (!charUrl && typeof context.getThumbnailUrl === 'function' && character.avatar) {
+                try { charUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
+            }
+            if (charUrl) {
+                const extraRef = await loadImageReference(charUrl, character.name, 'character');
+                if (extraRef && extraRef.dataUrl) {
+                    candidates.push({
+                        id: `char_${character.name || character.avatar}`,
+                        name: character.name || 'Personagem',
+                        role: 'character',
+                        roleLabel: 'Avatar de Personagem',
+                        badgeBg: 'rgba(148, 163, 184, 0.25)',
+                        badgeColor: '#94a3b8',
+                        hint: 'Card de outro personagem salvo',
+                        dataUrl: extraRef.dataUrl,
+                        charDescription: character.description || '',
+                        defaultSelected: false,
+                    });
+                }
+            }
+        }
+    }
+
     // Fallback if no character found
     if (!candidates.some(c => c.role === 'character')) {
         try {
@@ -852,23 +880,23 @@ function promptReferenceSelection(candidates, mode) {
 
         const addSection = $('<div>', { class: 'rvl-add-ref-section' });
 
-        // Botão para ver todas as imagens em miniatura caso haja mais de 10
-        if (allCandidateItems.length > 10) {
-            const toggleAllBtn = $('<button>', {
-                type: 'button',
-                class: 'menu_button rvl-view-all-btn',
-                html: `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`
-            });
-            toggleAllBtn.on('click', function () {
-                isShowingAll = !isShowingAll;
-                displayedItems = isShowingAll ? allCandidateItems : allCandidateItems.slice(0, 10);
-                populateGrid();
-                $(this).html(isShowingAll
-                    ? '<i class="fa-solid fa-compress"></i> Mostrar apenas as 10 principais'
-                    : `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`);
-            });
-            addSection.append(toggleAllBtn);
-        }
+        // Botão para ver todas as imagens em miniatura
+        const toggleAllBtn = $('<button>', {
+            type: 'button',
+            class: 'menu_button rvl-view-all-btn',
+            html: isShowingAll
+                ? '<i class="fa-solid fa-compress"></i> Mostrar apenas as 10 principais'
+                : `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`
+        });
+        toggleAllBtn.on('click', function () {
+            isShowingAll = !isShowingAll;
+            displayedItems = isShowingAll ? allCandidateItems : allCandidateItems.slice(0, 10);
+            populateGrid();
+            $(this).html(isShowingAll
+                ? '<i class="fa-solid fa-compress"></i> Mostrar apenas as 10 principais'
+                : `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`);
+        });
+        addSection.append(toggleAllBtn);
 
         const fileInput = $('<input>', {
             type: 'file',
