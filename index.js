@@ -463,8 +463,8 @@ async function collectChatAttachedImages(context) {
         console.warn(`[${MODULE_NAME}] DOM scan error:`, e);
     }
 
-    // 2. Scan recent messages in context.chat (up to 30 messages backwards)
-    const recent = chat.slice(-30).reverse();
+    // 2. Scan all messages in context.chat backwards
+    const recent = chat.slice().reverse();
     for (const m of recent) {
         if (!m) continue;
         const isUser = Boolean(m.is_user);
@@ -584,42 +584,14 @@ async function collectAllCandidates() {
                 id: `char_${character.name || 'main'}`,
                 name: character.name || currentCharacterName(),
                 role: 'character',
-                roleLabel: 'Personagem Principal',
+                roleLabel: 'Personagem do Chat',
                 badgeBg: 'rgba(56, 189, 248, 0.25)',
                 badgeColor: '#38bdf8',
-                hint: 'Rosto, cabelo e traços do card de personagem',
+                hint: 'Rosto, cabelo e traços do card oficial deste chat',
                 dataUrl: ref.dataUrl,
                 charDescription: character.description || '',
                 defaultSelected: true,
             });
-        }
-    }
-
-    // Se houver outros personagens na lista do SillyTavern, carrega seus avatares como candidatos adicionais
-    if (allCharacters.length > 1) {
-        for (const character of allCharacters) {
-            if (candidates.some(c => c.id === `char_${character.name || character.avatar}`)) continue;
-            let charUrl = character.avatar ? `/characters/${encodeURIComponent(character.avatar)}` : '';
-            if (!charUrl && typeof context.getThumbnailUrl === 'function' && character.avatar) {
-                try { charUrl = context.getThumbnailUrl('avatar', character.avatar); } catch {}
-            }
-            if (charUrl) {
-                const extraRef = await loadImageReference(charUrl, character.name, 'character');
-                if (extraRef && extraRef.dataUrl) {
-                    candidates.push({
-                        id: `char_${character.name || character.avatar}`,
-                        name: character.name || 'Personagem',
-                        role: 'character',
-                        roleLabel: 'Avatar de Personagem',
-                        badgeBg: 'rgba(148, 163, 184, 0.25)',
-                        badgeColor: '#94a3b8',
-                        hint: 'Card de outro personagem salvo',
-                        dataUrl: extraRef.dataUrl,
-                        charDescription: character.description || '',
-                        defaultSelected: false,
-                    });
-                }
-            }
         }
     }
 
@@ -691,7 +663,7 @@ async function collectAllCandidates() {
         const memory = getVisualMemory();
         const foundUrls = [];
 
-        // Coleta até as 2 mensagens visuais mais recentes do chat que não foram excluídas
+        // Coleta TODAS as mensagens visuais geradas no chat que não foram excluídas
         const recentGenMsgs = (context.chat || []).slice().reverse().filter(m => {
             return m.extra?.[MODULE_NAME]?.imageUrl && !m.extra[MODULE_NAME].excludedFromContinuity;
         });
@@ -700,7 +672,6 @@ async function collectAllCandidates() {
             const u = msg.extra[MODULE_NAME].imageUrl;
             if (u && !foundUrls.includes(u)) {
                 foundUrls.push(u);
-                if (foundUrls.length >= 2) break; // Máximo 2 últimas imagens geradas!
             }
         }
 
@@ -723,8 +694,8 @@ async function collectAllCandidates() {
                     });
                     if (image?.dataUrl) {
                         const isApproved = memory.lastApprovedImage?.url === continuityUrl;
-                        const labelTitle = isApproved ? 'Cena Aprovada (👍)' : (i === 0 ? 'Última Imagem Gerada' : 'Penúltima Imagem Gerada');
-                        const labelBadge = i === 0 ? 'Cena Anterior #1' : 'Cena Anterior #2';
+                        const labelTitle = isApproved ? 'Cena Aprovada (👍)' : (i === 0 ? 'Última Imagem Gerada' : `Cena Gerada #${i + 1}`);
+                        const labelBadge = i === 0 ? 'Cena Anterior #1' : `Cena #${i + 1}`;
                         candidates.push({
                             id: `continuity_img_${i}`,
                             name: labelTitle,
@@ -732,10 +703,10 @@ async function collectAllCandidates() {
                             roleLabel: labelBadge,
                             badgeBg: 'rgba(251, 191, 36, 0.28)',
                             badgeColor: '#fbbf24',
-                            hint: i === 0 ? 'Visual mais recente gerado no chat' : 'Segunda cena anterior gerada',
+                            hint: i === 0 ? 'Visual mais recente gerado no chat' : `Cena anterior #${i + 1} gerada neste chat`,
                             continuity: true,
                             dataUrl: image.dataUrl,
-                            defaultSelected: i === 0, // A 1ª vem selecionada por padrão; a 2ª fica pronta na grade!
+                            defaultSelected: i === 0, // Apenas a 1ª vem selecionada por padrão; as outras ficam prontas na grade
                         });
                     }
                 }
@@ -1338,9 +1309,13 @@ async function generateProxy(key, prompt, references, mode = "scene") {
         return 0;
     });
 
-    // 2. ETAPA 1: IA com visão multimodal analisa a cena e os avatares para estruturar o prompt descritivo perfeito
+    // 2. ETAPA 1: O pré-planejamento de prompt com chat só deve ocorrer se for modo spicy/pov_spicy ou modelo grok-imagine
+    // Para modos normais (scene, pov, look) no gpt-image-2.5 ou Gemini, ele vai DIRETO para a imagem sem chamar modelo de chat desnecessário!
     let effectivePrompt = prompt;
-    if (sortedRefs.length > 0 || model.includes("grok") || mode === "spicy" || mode === "pov_spicy") {
+    const isGrokModel = model.includes("grok");
+    const isSpicyMode = mode === "spicy" || mode === "pov_spicy";
+
+    if (isGrokModel || isSpicyMode) {
         const writerModel = s.promptWriterModel === "roleplay" ? getActiveRoleplayModel() : (s.promptWriterModel || "gemini-3.8-flash-high");
         notice(`IA (${writerModel}) analisando o avatar e estruturando o prompt da cena...`);
         const context = SillyTavern.getContext();
