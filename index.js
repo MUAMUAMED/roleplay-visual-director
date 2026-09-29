@@ -631,7 +631,7 @@ async function collectAllCandidates() {
                 badgeColor: '#4ade80',
                 hint: 'Foto enviada no chat (roupa, pose ou cenário)',
                 dataUrl: att.dataUrl,
-                defaultSelected: true,
+                defaultSelected: idx < 6, // Primeiras 6 selecionadas por padrão
             });
         });
     }
@@ -717,7 +717,7 @@ async function collectAllCandidates() {
         }
     }
 
-    return candidates.slice(0, 10);
+    return candidates;
 }
 
 function promptReferenceSelection(candidates, mode) {
@@ -758,7 +758,15 @@ function promptReferenceSelection(candidates, mode) {
         const body = $('<div>', { class: 'rvl-modal-body' });
         const grid = $('<div>', { class: 'rvl-ref-grid' });
 
-        const items = candidates.slice(0, 10).map((c, idx) => ({ ...c, uniqueKey: `cand_${idx}` }));
+        // Mapeia todos os candidatos disponíveis (avatar, anexos do chat, continuidade)
+        const allCandidateItems = candidates.map((c, idx) => ({
+            ...c,
+            uniqueKey: `cand_${idx}`,
+            defaultSelected: Boolean(c.defaultSelected)
+        }));
+
+        let isShowingAll = allCandidateItems.length <= 10;
+        let displayedItems = isShowingAll ? allCandidateItems : allCandidateItems.slice(0, 10);
 
         function renderItem(item) {
             const card = $('<div>', {
@@ -803,7 +811,7 @@ function promptReferenceSelection(candidates, mode) {
             function toggleSelect(forceVal) {
                 const nextVal = typeof forceVal === 'boolean' ? forceVal : !item.defaultSelected;
                 if (nextVal) {
-                    const currentCount = items.filter(it => it.defaultSelected).length;
+                    const currentCount = allCandidateItems.filter(it => it.defaultSelected).length;
                     if (currentCount >= 10 && !item.defaultSelected) {
                         notice('Limite máximo de 10 referências atingido.', true);
                         check.prop('checked', false);
@@ -834,10 +842,34 @@ function promptReferenceSelection(candidates, mode) {
             return card;
         }
 
-        items.forEach(item => grid.append(renderItem(item)));
+        function populateGrid() {
+            grid.empty();
+            displayedItems.forEach(item => grid.append(renderItem(item)));
+        }
+
+        populateGrid();
         body.append(grid);
 
         const addSection = $('<div>', { class: 'rvl-add-ref-section' });
+
+        // Botão para ver todas as imagens em miniatura caso haja mais de 10
+        if (allCandidateItems.length > 10) {
+            const toggleAllBtn = $('<button>', {
+                type: 'button',
+                class: 'menu_button rvl-view-all-btn',
+                html: `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`
+            });
+            toggleAllBtn.on('click', function () {
+                isShowingAll = !isShowingAll;
+                displayedItems = isShowingAll ? allCandidateItems : allCandidateItems.slice(0, 10);
+                populateGrid();
+                $(this).html(isShowingAll
+                    ? '<i class="fa-solid fa-compress"></i> Mostrar apenas as 10 principais'
+                    : `<i class="fa-solid fa-images"></i> Ver todas as ${allCandidateItems.length} miniaturas disponíveis`);
+            });
+            addSection.append(toggleAllBtn);
+        }
+
         const fileInput = $('<input>', {
             type: 'file',
             id: 'rvl_modal_upload_file',
@@ -854,7 +886,8 @@ function promptReferenceSelection(candidates, mode) {
         fileInput.on('change', function () {
             const file = this.files?.[0];
             if (!file) return;
-            if (items.length >= 10) {
+            const currentSelectedCount = allCandidateItems.filter(it => it.defaultSelected).length;
+            if (currentSelectedCount >= 10) {
                 notice('Limite máximo de 10 referências atingido.', true);
                 return;
             }
@@ -873,7 +906,10 @@ function promptReferenceSelection(candidates, mode) {
                     dataUrl,
                     defaultSelected: true,
                 };
-                items.push(newItem);
+                allCandidateItems.push(newItem);
+                if (!displayedItems.includes(newItem)) {
+                    displayedItems.push(newItem);
+                }
                 const el = renderItem(newItem);
                 grid.append(el);
                 updateCount();
@@ -915,7 +951,7 @@ function promptReferenceSelection(candidates, mode) {
         modal.append(dialog);
 
         function updateCount() {
-            const count = items.filter(it => it.defaultSelected).length;
+            const count = allCandidateItems.filter(it => it.defaultSelected).length;
             confirmBtn.find('.rvl-count').text(count);
         }
         updateCount();
@@ -939,7 +975,7 @@ function promptReferenceSelection(candidates, mode) {
         });
 
         confirmBtn.on('click', function () {
-            const selected = items.filter(it => it.defaultSelected).slice(0, 10).map(it => {
+            const selected = allCandidateItems.filter(it => it.defaultSelected).slice(0, 10).map(it => {
                 const parsed = dataUrlToImage(it.dataUrl);
                 return {
                     ...(parsed || {}),
@@ -2618,11 +2654,24 @@ function updateMemoryCacheStatus() {
     }
 }
 
+// Flag de inicialização única para evitar duplicação de gavetas/templates
+let isExtensionInitialized = false;
+
 async function init() {
+    if (isExtensionInitialized) return;
+    if ($('#roleplay_visual_director').length) {
+        isExtensionInitialized = true;
+        return;
+    }
+    isExtensionInitialized = true;
+
     try {
         const context = SillyTavern.getContext();
         settings();
         
+        // Remove qualquer elemento órfão prévio antes de renderizar
+        $('#roleplay_visual_director').remove();
+
         let html = '';
         try {
             html = await context.renderExtensionTemplateAsync('third-party/roleplay-visual-director', 'settings');
@@ -2634,7 +2683,7 @@ async function init() {
             }
         }
         
-        if (html) {
+        if (html && !$('#roleplay_visual_director').length) {
             $('#extensions_settings2').append(html);
         } else if (!$('#roleplay_visual_director').length) {
             // Fallback se renderExtensionTemplateAsync falhar por caminho relativo do ST
@@ -2642,7 +2691,9 @@ async function init() {
                 const rawRes = await fetch('/scripts/extensions/third-party/roleplay-visual-director/settings.html');
                 if (rawRes.ok) {
                     const fallbackHtml = await rawRes.text();
-                    $('#extensions_settings2').append(fallbackHtml);
+                    if (!$('#roleplay_visual_director').length) {
+                        $('#extensions_settings2').append(fallbackHtml);
+                    }
                 }
             } catch (fetchErr) {
                 console.warn(`[${MODULE_NAME}] Fallback fetch settings error:`, fetchErr);
